@@ -25,8 +25,11 @@ export async function getWorkPages(startDate: string, endDate: string) {
   return response.results;
 }
 
-// 페이지 본문(블록) 전체를 재귀적으로 가져오기
-export async function getAllBlocks(pageId: string): Promise<any[]> {
+// 페이지 본문(블록)을 가져오기 (depth 제한으로 API 호출 최소화)
+export async function getAllBlocks(
+  pageId: string,
+  maxDepth: number = 2
+): Promise<any[]> {
   const blocks: any[] = [];
   let cursor: string | undefined;
 
@@ -40,12 +43,14 @@ export async function getAllBlocks(pageId: string): Promise<any[]> {
     cursor = response.has_more ? (response.next_cursor ?? undefined) : undefined;
   } while (cursor);
 
-  // 토글 블록 등 하위 블록도 재귀 조회
+  if (maxDepth <= 0) return blocks;
+
+  // 하위 블록 재귀 조회 (depth 제한)
   const result: any[] = [];
   for (const block of blocks) {
     result.push(block);
     if ((block as any).has_children) {
-      const children = await getAllBlocks(block.id);
+      const children = await getAllBlocks(block.id, maxDepth - 1);
       result.push(...children);
     }
   }
@@ -152,10 +157,10 @@ export async function createMeetingPage(title: string, todayIso: string) {
   return await response.json();
 }
 
-// 페이지에 템플릿 블록이 적용될 때까지 대기
+// 페이지에 템플릿 블록이 적용될 때까지 대기 (exponential backoff)
 export async function waitForTemplateBlocks(
   pageId: string,
-  maxRetries = 15
+  maxRetries = 10
 ): Promise<void> {
   for (let i = 0; i < maxRetries; i++) {
     const response = await notion.blocks.children.list({
@@ -166,7 +171,8 @@ export async function waitForTemplateBlocks(
       (b: any) => b.type === "heading_2"
     );
     if (hasHeading) return;
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // 500ms, 750ms, 1000ms, ... (점진적 증가)
+    await new Promise((resolve) => setTimeout(resolve, 500 + i * 250));
   }
   throw new Error("Template blocks not applied after waiting");
 }

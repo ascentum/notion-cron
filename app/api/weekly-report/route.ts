@@ -15,6 +15,9 @@ import {
 } from "@/lib/notion";
 import { generateWeeklySummary, SummarizedDay } from "@/lib/openai";
 
+// Vercel Hobby: 최대 60초
+export const maxDuration = 60;
+
 // Vercel Cron이 호출할 때 Authorization 헤더로 시크릿 검증
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -38,25 +41,37 @@ export async function GET(req: NextRequest) {
     const workPages = await getWorkPages(startIso, todayIso);
     console.log(`Found ${workPages.length} work pages from ${startIso} to ${todayIso}`);
 
-    // 3. 각 페이지의 완료 task 파싱
-    const dailySummaries = await Promise.all(
-      workPages.map(async (page: any) => {
-        const date = getPageDate(page) ?? "날짜 불명";
-        const users = getPageUsers(page);
-        const blocks = await getAllBlocks(page.id);
-        const checkedTasks = extractCheckedTodos(blocks);
+    // 3. 각 페이지의 완료 task 파싱 (3개씩 병렬 처리 — rate limit 방지)
+    const dailySummaries: {
+      date: string;
+      youngminTasks: string[];
+      seyeonTasks: string[];
+      allTasks: string[];
+    }[] = [];
 
-        const isYoungmin = users.includes(YOUNGMIN_ID);
-        const isSeyeon = users.includes(SEYEON_ID);
+    const BATCH_SIZE = 3;
+    for (let i = 0; i < workPages.length; i += BATCH_SIZE) {
+      const batch = workPages.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(async (page: any) => {
+          const date = getPageDate(page) ?? "날짜 불명";
+          const users = getPageUsers(page);
+          const blocks = await getAllBlocks(page.id, 2);
+          const checkedTasks = extractCheckedTodos(blocks);
 
-        return {
-          date,
-          youngminTasks: isYoungmin ? checkedTasks : [],
-          seyeonTasks: isSeyeon ? checkedTasks : [],
-          allTasks: checkedTasks,
-        };
-      })
-    );
+          const isYoungmin = users.includes(YOUNGMIN_ID);
+          const isSeyeon = users.includes(SEYEON_ID);
+
+          return {
+            date,
+            youngminTasks: isYoungmin ? checkedTasks : [],
+            seyeonTasks: isSeyeon ? checkedTasks : [],
+            allTasks: checkedTasks,
+          };
+        })
+      );
+      dailySummaries.push(...results);
+    }
 
     // 완료 task가 하나도 없으면 스킵
     let totalTasks = 0;
