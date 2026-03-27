@@ -25,6 +25,12 @@ export async function getWorkPages(startDate: string, endDate: string) {
   return response.results;
 }
 
+// to_do를 포함할 수 있는 블록 타입만 재귀 조회 (heading, divider 등 불필요한 호출 제거)
+const TODO_CONTAINER_TYPES = new Set([
+  "to_do", "callout", "column_list", "column", "toggle",
+  "bulleted_list_item", "numbered_list_item", "quote", "synced_block",
+]);
+
 // 페이지 본문(블록)을 가져오기 (depth 제한으로 API 호출 최소화)
 export async function getAllBlocks(
   pageId: string,
@@ -45,11 +51,11 @@ export async function getAllBlocks(
 
   if (maxDepth <= 0) return blocks;
 
-  // 하위 블록 재귀 조회 (depth 제한)
+  // to_do를 담을 수 있는 블록 타입만 재귀 조회
   const result: any[] = [];
   for (const block of blocks) {
     result.push(block);
-    if ((block as any).has_children) {
+    if ((block as any).has_children && TODO_CONTAINER_TYPES.has(block.type)) {
       const children = await getAllBlocks(block.id, maxDepth - 1);
       result.push(...children);
     }
@@ -206,17 +212,18 @@ export function findToggleInBlocks(blocks: any[]): string | null {
   return toggle?.id ?? null;
 }
 
-// 페이지에 블록 추가 (선택적으로 특정 블록 뒤에 삽입)
+// 페이지에 블록 추가 (선택적으로 특정 블록 뒤에 삽입) — 생성된 블록 목록 반환
 export async function appendContent(
   pageId: string,
   blocks: any[],
   afterBlockId?: string
-) {
-  await notion.blocks.children.append({
+): Promise<any[]> {
+  const response = await notion.blocks.children.append({
     block_id: pageId,
     children: blocks,
     ...(afterBlockId && { after: afterBlockId }),
   } as any);
+  return (response as any).results ?? [];
 }
 
 // 블록 삭제
