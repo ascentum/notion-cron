@@ -10,7 +10,9 @@ import {
   waitForTemplateBlocks,
   appendContent,
   findMeetingPageByDate,
-  findHeadingBlock,
+  getPageTopBlocks,
+  findHeadingInBlocks,
+  findToggleInBlocks,
   deleteBlock,
 } from "@/lib/notion";
 import { generateWeeklySummary, SummarizedDay } from "@/lib/openai";
@@ -103,8 +105,11 @@ export async function GET(req: NextRequest) {
       console.log(`Created page from template: ${pageId}`);
     }
 
-    // 7. "2️⃣" 헤딩 뒤에 콘텐츠 삽입
-    const insertAfterBlockId = await findHeadingBlock(pageId, "2️⃣");
+    // 7. 페이지 최상위 블록 한 번에 가져오기
+    const topBlocks = await getPageTopBlocks(pageId);
+
+    // "2️⃣" 헤딩 뒤에 콘텐츠 삽입
+    const insertAfterBlockId = findHeadingInBlocks(topBlocks, "2️⃣");
     const contentBlocks = buildContentBlocks(overview, startShort, endShort);
     if (insertAfterBlockId) {
       await appendContent(pageId, contentBlocks, insertAfterBlockId);
@@ -113,11 +118,11 @@ export async function GET(req: NextRequest) {
     }
 
     // 8. 토글 블록에 column 추가 + placeholder 삭제
-    const toggleBlock = await findToggleBlock(pageId);
-    if (toggleBlock) {
+    const toggleBlockId = findToggleInBlocks(topBlocks);
+    if (toggleBlockId) {
       const columnBlocks = buildColumnBlocks(summarizedDaily);
-      await appendContent(toggleBlock, columnBlocks);
-      await deleteEmptyParagraph(toggleBlock);
+      await appendContent(toggleBlockId, columnBlocks);
+      await deleteEmptyParagraph(toggleBlockId);
     }
 
     console.log(`Completed meeting page: ${pageId}`);
@@ -133,18 +138,6 @@ export async function GET(req: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-// 페이지에서 토글 블록 ID 찾기
-async function findToggleBlock(pageId: string): Promise<string | null> {
-  const response = await notion.blocks.children.list({
-    block_id: pageId,
-    page_size: 100,
-  });
-  const toggle = response.results.find(
-    (b: any) => b.type === "toggle"
-  ) as any;
-  return toggle?.id ?? null;
 }
 
 // 토글 내 빈 paragraph 삭제 (placeholder 제거)

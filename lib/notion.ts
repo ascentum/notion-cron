@@ -160,7 +160,7 @@ export async function createMeetingPage(title: string, todayIso: string) {
 // 페이지에 템플릿 블록이 적용될 때까지 대기 (exponential backoff)
 export async function waitForTemplateBlocks(
   pageId: string,
-  maxRetries = 10
+  maxRetries = 6
 ): Promise<void> {
   for (let i = 0; i < maxRetries; i++) {
     const response = await notion.blocks.children.list({
@@ -171,10 +171,39 @@ export async function waitForTemplateBlocks(
       (b: any) => b.type === "heading_2"
     );
     if (hasHeading) return;
-    // 500ms, 750ms, 1000ms, ... (점진적 증가)
-    await new Promise((resolve) => setTimeout(resolve, 500 + i * 250));
+    // 200ms, 300ms, 400ms, ... (점진적 증가)
+    await new Promise((resolve) => setTimeout(resolve, 200 + i * 100));
   }
   throw new Error("Template blocks not applied after waiting");
+}
+
+// 페이지 최상위 블록 목록 한 번에 가져오기
+export async function getPageTopBlocks(pageId: string): Promise<any[]> {
+  const response = await notion.blocks.children.list({
+    block_id: pageId,
+    page_size: 100,
+  });
+  return response.results;
+}
+
+// 블록 목록에서 특정 텍스트 포함 heading_2 ID 찾기
+export function findHeadingInBlocks(
+  blocks: any[],
+  searchText: string
+): string | null {
+  const heading = blocks.find((b: any) => {
+    if (b.type !== "heading_2") return false;
+    const text =
+      b.heading_2?.rich_text?.map((rt: any) => rt.plain_text).join("") ?? "";
+    return text.includes(searchText);
+  });
+  return heading?.id ?? null;
+}
+
+// 블록 목록에서 첫 번째 toggle 블록 ID 찾기
+export function findToggleInBlocks(blocks: any[]): string | null {
+  const toggle = blocks.find((b: any) => b.type === "toggle");
+  return toggle?.id ?? null;
 }
 
 // 페이지에 블록 추가 (선택적으로 특정 블록 뒤에 삽입)
