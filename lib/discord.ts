@@ -1,3 +1,5 @@
+import nacl from "tweetnacl";
+
 const DISCORD_API = "https://discord.com/api/v10";
 
 function botHeaders(): Record<string, string> {
@@ -67,25 +69,17 @@ export async function getChannelMessages(
   return res.json();
 }
 
-// Discord Interactions 서명 검증 (Web Crypto API 사용, 외부 패키지 불필요)
-export async function verifyDiscordSignature(
+// Discord Interactions 서명 검증 (tweetnacl 사용)
+export function verifyDiscordSignature(
   signature: string,
   timestamp: string,
   rawBody: string
-): Promise<boolean> {
+): boolean {
   try {
-    const key = await crypto.subtle.importKey(
-      "raw",
-      Buffer.from(process.env.DISCORD_APP_PUBLIC_KEY!, "hex"),
-      { name: "Ed25519" },
-      false,
-      ["verify"]
-    );
-    return await crypto.subtle.verify(
-      { name: "Ed25519" },
-      key,
+    return nacl.sign.detached.verify(
+      Buffer.from(timestamp + rawBody),
       Buffer.from(signature, "hex"),
-      new TextEncoder().encode(timestamp + rawBody)
+      Buffer.from(process.env.DISCORD_APP_PUBLIC_KEY!, "hex")
     );
   } catch (e) {
     console.error("[discord] signature verify error:", e);

@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   const signature = req.headers.get("x-signature-ed25519") ?? "";
   const timestamp = req.headers.get("x-signature-timestamp") ?? "";
 
-  const isValid = await verifyDiscordSignature(signature, timestamp, rawBody);
+  const isValid = verifyDiscordSignature(signature, timestamp, rawBody);
   if (!isValid) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
