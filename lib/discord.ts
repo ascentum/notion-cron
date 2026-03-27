@@ -77,17 +77,18 @@ export async function verifyDiscordSignature(
     const key = await crypto.subtle.importKey(
       "raw",
       Buffer.from(process.env.DISCORD_APP_PUBLIC_KEY!, "hex"),
-      { name: "Ed25519", namedCurve: "Ed25519" },
+      { name: "Ed25519" },
       false,
       ["verify"]
     );
-    return crypto.subtle.verify(
-      "Ed25519",
+    return await crypto.subtle.verify(
+      { name: "Ed25519" },
       key,
       Buffer.from(signature, "hex"),
       new TextEncoder().encode(timestamp + rawBody)
     );
-  } catch {
+  } catch (e) {
+    console.error("[discord] signature verify error:", e);
     return false;
   }
 }
