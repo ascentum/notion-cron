@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/daily-snippet",
-      "schedule": "0,30 15 * * *"
+      "schedule": "0 15 * * *"
     }
   ]
 }
