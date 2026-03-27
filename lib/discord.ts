@@ -1,4 +1,4 @@
-import nacl from "tweetnacl";
+import crypto from "crypto";
 
 const DISCORD_API = "https://discord.com/api/v10";
 
@@ -69,17 +69,27 @@ export async function getChannelMessages(
   return res.json();
 }
 
-// Discord Interactions 서명 검증 (tweetnacl 사용)
+// Ed25519 SPKI DER 헤더 (Node.js crypto가 raw key를 받으려면 필요)
+const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
+
+// Discord Interactions 서명 검증 (Node.js 내장 crypto 사용)
 export function verifyDiscordSignature(
   signature: string,
   timestamp: string,
   rawBody: string
 ): boolean {
   try {
-    return nacl.sign.detached.verify(
+    const rawKey = Buffer.from(process.env.DISCORD_APP_PUBLIC_KEY!, "hex");
+    const publicKey = crypto.createPublicKey({
+      key: Buffer.concat([ED25519_SPKI_PREFIX, rawKey]),
+      format: "der",
+      type: "spki",
+    });
+    return crypto.verify(
+      null,
       Buffer.from(timestamp + rawBody),
-      Buffer.from(signature, "hex"),
-      Buffer.from(process.env.DISCORD_APP_PUBLIC_KEY!, "hex")
+      publicKey,
+      Buffer.from(signature, "hex")
     );
   } catch (e) {
     console.error("[discord] signature verify error:", e);
