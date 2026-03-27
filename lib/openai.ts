@@ -101,3 +101,106 @@ ${dailyData}
 
   return { overview, summarizedDaily };
 }
+
+// 개인별 데일리 스니펫 내용 생성 (헬스체크 제외)
+export async function generateDailySnippetContent(
+  name: string,
+  date: string,
+  tasks: string[]
+): Promise<string> {
+  const openai = getClient();
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o",
+    max_tokens: 900,
+    messages: [
+      {
+        role: "user",
+        content: `다음은 ${name}의 오늘(${date}) 완료한 업무 목록이야.
+아래 형식에 맞게 정리해줘.
+
+형식 (섹션 제목은 **굵게**, 항목은 - 리스트):
+
+**오늘 한 일**
+- [완료한 업무 항목]
+
+**수행 목적**
+- [각 업무의 목적/이유]
+
+**하이라이트**
+- [잘 된 것, 의미 있는 성과]
+
+**로우라이트**
+- [미완료, 막힌 것, 아쉬운 점]
+
+**내일의 우선순위**
+- [오늘 흐름에서 이어질 다음 할 일]
+
+**오늘 내가 팀에 기여한 가치**
+- [팀/프로젝트에 실질적으로 기여한 내용]
+
+**오늘의 배움 또는 남길 말**
+[인사이트, 회고 — 1~2문장, 리스트 없이 자연스럽게]
+
+규칙:
+- 섹션 제목은 반드시 **볼드** 처리
+- 항목은 - 리스트로
+- 없는 내용은 "- (없음)"으로
+- 자연스럽고 간결하게
+
+완료한 업무:
+${tasks.join("\n")}`,
+      },
+    ],
+  });
+  return res.choices[0].message.content ?? "";
+}
+
+// 개인별 주간 스니펫 내용 생성
+export async function generateWeeklySnippetContent(
+  name: string,
+  weekStart: string,
+  weekEnd: string,
+  dailyTasks: { date: string; tasks: string[] }[]
+): Promise<string> {
+  const openai = getClient();
+  const rawData = dailyTasks
+    .filter((d) => d.tasks.length > 0)
+    .map((d) => `[${d.date}]\n${d.tasks.map((t) => `- ${t}`).join("\n")}`)
+    .join("\n\n");
+
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o",
+    max_tokens: 800,
+    messages: [
+      {
+        role: "user",
+        content: `다음은 ${name}의 ${weekStart}~${weekEnd} 주간 완료 업무야.
+아래 형식에 맞게 정리해줘.
+
+형식 (섹션 제목은 **굵게**):
+
+**이번 주 핵심 성과**
+① [제목] — [설명]
+② [제목] — [설명]
+③ [제목] — [설명]
+
+**상세 업무 내역**
+- [날짜]: [주요 업무 1줄 요약]
+
+**다음 주 계획**
+- [이번 주 흐름에서 이어갈 내용]
+
+**이번 주 회고**
+[잘 된 점 / 개선할 점 — 2~3문장, 자연스럽게]
+
+규칙:
+- 섹션 제목은 반드시 **볼드** 처리
+- 자연스럽고 간결하게
+
+업무 데이터:
+${rawData}`,
+      },
+    ],
+  });
+  return res.choices[0].message.content ?? "";
+}
