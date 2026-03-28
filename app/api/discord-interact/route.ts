@@ -4,12 +4,19 @@ import {
   editDiscordMessage,
   getDiscordMessage,
 } from "@/lib/discord";
-import { postDailySnippet, postWeeklySnippet } from "@/lib/gcs";
+import {
+  postDailySnippet,
+  postWeeklySnippet,
+  triggerDailyFeedback,
+  triggerWeeklyFeedback,
+} from "@/lib/gcs";
 
 const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID!;
 const GCS_TOKEN_YOUNGMIN = process.env.GCS_API_TOKEN_YOUNGMIN!;
 const GCS_TOKEN_SEYEON = process.env.GCS_API_TOKEN_SEYEON!;
 const DEFAULT_HEALTH_SCORE = "5";
+
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
@@ -219,10 +226,21 @@ async function tryPost(
     } else {
       await postDailySnippet(token, content);
     }
+    // 게시 성공 후 AI 채점 자동 트리거 (fire-and-forget)
+    fireFeedback(person, type);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String(err) };
   }
+}
+
+// AI 채점 비동기 트리거
+function fireFeedback(person: string, type: string) {
+  const token = person === "youngmin" ? GCS_TOKEN_YOUNGMIN : GCS_TOKEN_SEYEON;
+  const trigger = type === "weekly" ? triggerWeeklyFeedback : triggerDailyFeedback;
+  trigger(token).catch((err) =>
+    console.error(`[feedback] ${person}:${type} failed:`, err)
+  );
 }
 
 // Discord 메시지 완료 상태로 수정

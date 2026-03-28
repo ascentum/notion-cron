@@ -15,7 +15,12 @@ import {
   getChannelMessages,
   editDiscordMessage,
 } from "@/lib/discord";
-import { postDailySnippet, postWeeklySnippet } from "@/lib/gcs";
+import {
+  postDailySnippet,
+  postWeeklySnippet,
+  triggerDailyFeedback,
+  triggerWeeklyFeedback,
+} from "@/lib/gcs";
 
 export const maxDuration = 60;
 
@@ -196,8 +201,14 @@ async function handleTimeoutCheck() {
     try {
       if (type === "weekly") {
         await postWeeklySnippet(token, content);
+        triggerWeeklyFeedback(token).catch((err) =>
+          console.error(`[timeout-feedback] ${person}:weekly failed:`, err)
+        );
       } else {
         await postDailySnippet(token, content);
+        triggerDailyFeedback(token).catch((err) =>
+          console.error(`[timeout-feedback] ${person}:daily failed:`, err)
+        );
       }
 
       // Discord 메시지 업데이트 (버튼 제거)
