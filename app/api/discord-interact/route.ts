@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import {
   verifyDiscordSignature,
   editDiscordMessage,
@@ -35,6 +35,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ type: 1 });
   }
 
+  // 슬래시 커맨드 (APPLICATION_COMMAND)
+  if (interaction.type === 2) {
+    return handleSlashCommand(interaction, req);
+  }
+
   // 버튼 클릭 (MESSAGE_COMPONENT)
   if (interaction.type === 3) {
     return handleButtonClick(interaction);
@@ -43,6 +48,35 @@ export async function POST(req: NextRequest) {
   // 모달 제출 (MODAL_SUBMIT)
   if (interaction.type === 5) {
     return handleModalSubmit(interaction);
+  }
+
+  return NextResponse.json({ type: 1 });
+}
+
+// ── 슬래시 커맨드 분기 ────────────────────────────────────────────────────
+
+async function handleSlashCommand(interaction: any, req: NextRequest) {
+  const commandName: string = interaction.data?.name ?? "";
+
+  if (commandName === "snippet") {
+    const baseUrl = new URL(req.url).origin;
+    after(async () => {
+      try {
+        await fetch(`${baseUrl}/api/daily-snippet`, {
+          headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
+        });
+      } catch (err) {
+        console.error("[slash/snippet] trigger failed:", err);
+      }
+    });
+
+    return NextResponse.json({
+      type: 4,
+      data: {
+        content: "⚡ 스니펫 강제 실행을 시작했어요! 잠시 후 채널에서 확인하세요.",
+        flags: 64, // ephemeral
+      },
+    });
   }
 
   return NextResponse.json({ type: 1 });

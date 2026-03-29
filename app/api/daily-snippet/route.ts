@@ -80,7 +80,7 @@ async function handleSendSnippets(now: Date) {
 
   const shortDate = toShortDate(todayIso);
 
-  // 일간 스니펫 Discord 전송 (태스크 있는 사람만)
+  // 일간 스니펫 Discord 전송 (태스크 있는 사람만, 없으면 경고)
   const jobs: Promise<void>[] = [];
   if (youngminTasks.length > 0) {
     jobs.push(
@@ -88,6 +88,8 @@ async function handleSendSnippets(now: Date) {
         (content) => sendSnippetMessage(content, "youngmin", "daily", shortDate)
       )
     );
+  } else {
+    jobs.push(sendNoTaskWarning("youngmin", shortDate));
   }
   if (seyeonTasks.length > 0) {
     jobs.push(
@@ -95,6 +97,8 @@ async function handleSendSnippets(now: Date) {
         (content) => sendSnippetMessage(content, "seyeon", "daily", shortDate)
       )
     );
+  } else {
+    jobs.push(sendNoTaskWarning("seyeon", shortDate));
   }
   await Promise.all(jobs);
 
@@ -158,6 +162,8 @@ async function handleWeeklySnippets(
         (content) => sendSnippetMessage(content, "youngmin", "weekly", weekLabel)
       )
     );
+  } else {
+    weeklyJobs.push(sendNoTaskWarning("youngmin", weekLabel));
   }
   if (syWeekly.length > 0) {
     weeklyJobs.push(
@@ -165,6 +171,8 @@ async function handleWeeklySnippets(
         (content) => sendSnippetMessage(content, "seyeon", "weekly", weekLabel)
       )
     );
+  } else {
+    weeklyJobs.push(sendNoTaskWarning("seyeon", weekLabel));
   }
   await Promise.all(weeklyJobs);
 }
@@ -229,6 +237,23 @@ async function handleTimeoutCheck() {
 }
 
 // ── 헬퍼 ─────────────────────────────────────────────────────────────────
+
+async function sendNoTaskWarning(
+  person: "youngmin" | "seyeon",
+  dateLabel: string
+) {
+  const nameKo = person === "youngmin" ? "박영민" : "조세연";
+  const color = person === "youngmin" ? 0x5865f2 : 0xeb459e;
+  const embed = {
+    title: `⚠️ ${nameKo} | 오늘 기록된 업무 없음 (${dateLabel})`,
+    description:
+      "오늘 완료한 업무에 체크가 없거나 Notion 페이지가 없어요!\n" +
+      "혹시 까먹으셨나요? Notion에서 체크 후 `/snippet` 명령어로 다시 실행할 수 있어요.",
+    color,
+    footer: { text: "업무를 체크한 뒤 /snippet 으로 강제 실행하세요" },
+  };
+  await sendDiscordMessage(CHANNEL_ID, [embed], []);
+}
 
 async function sendSnippetMessage(
   content: string,
