@@ -62,7 +62,7 @@ async function handleSlashCommand(interaction: any, req: NextRequest) {
     const baseUrl = new URL(req.url).origin;
     after(async () => {
       try {
-        await fetch(`${baseUrl}/api/daily-snippet`, {
+        await fetch(`${baseUrl}/api/daily-snippet?action=send`, {
           headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
         });
       } catch (err) {
