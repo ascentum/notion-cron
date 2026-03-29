@@ -8,7 +8,7 @@ Notion + Discord + GCS Pulse 연동 자동화 서버 (Vercel Cron 기반)
 
 ### 1. 데일리/주간 스니펫 (`/api/daily-snippet`)
 
-매일 **22:00 KST** Vercel Cron이 트리거.
+매일 **00:00 KST (자정)** Vercel Cron이 트리거.
 
 ```
 Notion 업무 DB (오늘 완료 task)
@@ -22,7 +22,7 @@ Discord 채널에 검토 요청 (버튼 포함)
 GCS Pulse 게시 → AI 채점 자동 트리거
 ```
 
-**22:30 KST** 두 번째 Cron 실행 — 30분 이내 무응답 메시지는 자동 게시 후 AI 채점.
+**00:30 KST** 두 번째 Cron 실행 (외부 cron-job 서비스) — 30분 이내 무응답 메시지는 자동 게시 후 AI 채점.
 
 **월요일**에는 지난 7일 데이터를 모아 주간 스니펫도 함께 생성.
 
@@ -118,8 +118,8 @@ Vercel Cron 스케줄 (`vercel.json` 참고):
 
 | 경로 | 스케줄 (UTC) | KST |
 |------|-------------|-----|
-| `/api/daily-snippet` | `0 13 * * *` | 매일 22:00 |
-| `/api/daily-snippet?action=timeout` | `30 13 * * *` | 매일 22:30 |
+| `/api/daily-snippet` | `0 15 * * *` | 매일 00:00 (자정) |
+| `/api/daily-snippet?action=timeout` | `30 15 * * *` | 매일 00:30 (외부 cron-job) |
 | `/api/weekly-report` | `50 6 * * 4` | 매주 목요일 15:50 |
 
 ---
