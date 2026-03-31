@@ -3,10 +3,6 @@
     {
       "path": "/api/weekly-report",
       "schedule": "50 6 * * 4"
-    },
-    {
-      "path": "/api/daily-snippet",
-      "schedule": "0 15 * * *"
     }
   ]
 }
