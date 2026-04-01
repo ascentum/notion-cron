@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   notion,
   getWorkPages,
-  getAllBlocks,
-  extractCheckedTodos,
   getPageUsers,
   getPageDate,
+  getTaskTitle,
+  getTaskCategory,
   createMeetingPage,
   waitForTemplateBlocks,
   appendContent,
@@ -39,47 +39,37 @@ export async function GET(req: NextRequest) {
     const YOUNGMIN_ID = process.env.NOTION_USER_YOUNGMIN!;
     const SEYEON_ID = process.env.NOTION_USER_SEYEON!;
 
-    // 2. 업무 DB에서 해당 기간 페이지 가져오기
+    // 2. 어센텀 업무 DB에서 해당 기간의 완료된 업무 가져오기
     const workPages = await getWorkPages(startIso, todayIso);
-    console.log(`Found ${workPages.length} work pages from ${startIso} to ${todayIso}`);
+    console.log(`Found ${workPages.length} completed tasks from ${startIso} to ${todayIso}`);
 
-    // 3. 각 페이지의 완료 task 파싱 (3개씩 병렬 처리 — rate limit 방지)
-    const dailySummaries: {
-      date: string;
-      youngminTasks: string[];
-      seyeonTasks: string[];
-      allTasks: string[];
-    }[] = [];
+    // 3. 날짜별 그룹핑 → 사람별 업무 목록 구성
+    const byDate: Record<string, { youngmin: string[]; seyeon: string[]; all: string[] }> = {};
 
-    const BATCH_SIZE = 3;
-    for (let i = 0; i < workPages.length; i += BATCH_SIZE) {
-      const batch = workPages.slice(i, i + BATCH_SIZE);
-      const results = await Promise.all(
-        batch.map(async (page: any) => {
-          const date = getPageDate(page) ?? "날짜 불명";
-          const users = getPageUsers(page);
-          const blocks = await getAllBlocks(page.id, 2);
-          const checkedTasks = extractCheckedTodos(blocks);
+    for (const page of workPages) {
+      const date = getPageDate(page) ?? "날짜 불명";
+      const users = getPageUsers(page);
+      const cat = getTaskCategory(page);
+      const title = getTaskTitle(page);
+      if (!title) continue;
 
-          const isYoungmin = users.includes(YOUNGMIN_ID);
-          const isSeyeon = users.includes(SEYEON_ID);
+      const formatted = cat ? `[${cat}] ${title}` : title;
 
-          return {
-            date,
-            youngminTasks: isYoungmin ? checkedTasks : [],
-            seyeonTasks: isSeyeon ? checkedTasks : [],
-            allTasks: checkedTasks,
-          };
-        })
-      );
-      dailySummaries.push(...results);
+      if (!byDate[date]) byDate[date] = { youngmin: [], seyeon: [], all: [] };
+      byDate[date].all.push(formatted);
+      if (users.includes(YOUNGMIN_ID)) byDate[date].youngmin.push(formatted);
+      if (users.includes(SEYEON_ID)) byDate[date].seyeon.push(formatted);
     }
 
-    // 완료 task가 하나도 없으면 스킵
-    let totalTasks = 0;
-    for (const d of dailySummaries) {
-      totalTasks += d.allTasks.length;
-    }
+    const dailySummaries = Object.entries(byDate).map(([date, tasks]) => ({
+      date,
+      youngminTasks: tasks.youngmin,
+      seyeonTasks: tasks.seyeon,
+      allTasks: tasks.all,
+    }));
+
+    // 완료 업무가 하나도 없으면 스킵
+    const totalTasks = dailySummaries.reduce((sum, d) => sum + d.allTasks.length, 0);
     if (totalTasks === 0) {
       return NextResponse.json({ message: "No completed tasks found" });
     }

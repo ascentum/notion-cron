@@ -4,25 +4,40 @@ export const notion = new Client({
   auth: process.env.NOTION_API_KEY,
 });
 
-// 업무 DB에서 특정 날짜 범위의 페이지 목록 조회
+// 어센텀 업무 DB에서 특정 날짜 범위의 완료된 업무 목록 조회 (페이지네이션 지원)
 export async function getWorkPages(startDate: string, endDate: string) {
-  const response = await notion.databases.query({
-    database_id: process.env.NOTION_WORK_DB_ID!,
-    filter: {
-      and: [
-        {
-          property: "일정",
-          date: { on_or_after: startDate },
-        },
-        {
-          property: "일정",
-          date: { on_or_before: endDate },
-        },
-      ],
-    },
-    sorts: [{ property: "일정", direction: "ascending" }],
-  });
-  return response.results;
+  const allResults: any[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const response = await notion.databases.query({
+      database_id: process.env.NOTION_WORK_DB_ID!,
+      filter: {
+        and: [
+          {
+            property: "완료일",
+            date: { on_or_after: startDate },
+          },
+          {
+            property: "완료일",
+            date: { on_or_before: endDate },
+          },
+          {
+            property: "완료",
+            checkbox: { equals: true },
+          },
+        ],
+      },
+      sorts: [{ property: "완료일", direction: "ascending" }],
+      start_cursor: cursor,
+    });
+    allResults.push(...response.results);
+    cursor = response.has_more
+      ? (response.next_cursor ?? undefined)
+      : undefined;
+  } while (cursor);
+
+  return allResults;
 }
 
 // to_do를 포함할 수 있는 블록 타입만 재귀 조회 (heading, divider 등 불필요한 호출 제거)
@@ -74,18 +89,164 @@ export function extractCheckedTodos(blocks: any[]): string[] {
     .filter((text) => text.trim().length > 0);
 }
 
-// 페이지 사람 속성에서 User ID 목록 반환
+// 페이지 PIC 속성에서 User ID 목록 반환
 export function getPageUsers(page: any): string[] {
-  const peopleProp = page.properties?.["사람"];
+  const peopleProp = page.properties?.["PIC"];
   if (!peopleProp || peopleProp.type !== "people") return [];
   return peopleProp.people.map((p: any) => p.id);
 }
 
-// 페이지 날짜(일정) 반환
+// 페이지 완료일 반환
 export function getPageDate(page: any): string | null {
-  const dateProp = page.properties?.["일정"];
+  const dateProp = page.properties?.["완료일"];
   if (!dateProp || dateProp.type !== "date") return null;
   return dateProp.date?.start ?? null;
+}
+
+// 업무 아이템의 제목(이름) 반환
+export function getTaskTitle(page: any): string {
+  const titleProp = page.properties?.["이름"];
+  if (!titleProp || titleProp.type !== "title") return "";
+  return titleProp.title.map((rt: any) => rt.plain_text).join("");
+}
+
+// 업무 아이템의 카테고리 반환
+export function getTaskCategory(page: any): string | null {
+  const selectProp = page.properties?.["카테고리"];
+  if (!selectProp || selectProp.type !== "select") return null;
+  return selectProp.select?.name ?? null;
+}
+
+// 업무 아이템의 상위 항목 ID 반환 (없으면 null)
+export function getTaskParentId(page: any): string | null {
+  const relationProp = page.properties?.["상위 항목"];
+  if (!relationProp || relationProp.type !== "relation") return null;
+  return relationProp.relation?.[0]?.id ?? null;
+}
+
+// 단일 페이지의 제목 조회 (부모 업무 제목 가져올 때 사용)
+export async function fetchPageTitle(pageId: string): Promise<string> {
+  const page = await notion.pages.retrieve({ page_id: pageId });
+  return getTaskTitle(page as any);
+}
+
+// 업무 페이지를 계층 구조로 변환하고 사람별 포맷된 텍스트 반환
+interface TaskInfo {
+  id: string;
+  title: string;
+  category: string | null;
+  parentId: string | null;
+  users: string[];
+  date: string | null;
+}
+
+export async function buildFormattedTasks(
+  pages: any[],
+  userIds: Record<string, string> // { "youngmin": YOUNGMIN_ID, "seyeon": SEYEON_ID }
+): Promise<Record<string, string[]>> {
+  // 1. 모든 페이지에서 기본 정보 추출
+  const tasks: TaskInfo[] = pages.map((page) => ({
+    id: page.id as string,
+    title: getTaskTitle(page),
+    category: getTaskCategory(page),
+    parentId: getTaskParentId(page),
+    users: getPageUsers(page),
+    date: getPageDate(page),
+  }));
+
+  const taskById = new Map(tasks.map((t) => [t.id, t]));
+
+  // 2. 쿼리 결과에 없는 부모 ID 수집 → 제목 일괄 조회
+  const missingParentIds = new Set<string>();
+  for (const t of tasks) {
+    if (t.parentId && !taskById.has(t.parentId)) {
+      missingParentIds.add(t.parentId);
+    }
+  }
+
+  const parentTitles = new Map<string, string>();
+  if (missingParentIds.size > 0) {
+    await Promise.all(
+      [...missingParentIds].map(async (pid) => {
+        try {
+          parentTitles.set(pid, await fetchPageTitle(pid));
+        } catch {
+          parentTitles.set(pid, "(상위 업무)");
+        }
+      })
+    );
+  }
+
+  // 3. 계층 구조 빌드
+  const childrenByParent = new Map<string, TaskInfo[]>();
+  const topLevel: TaskInfo[] = [];
+
+  for (const t of tasks) {
+    if (!t.parentId) {
+      topLevel.push(t);
+    } else {
+      const list = childrenByParent.get(t.parentId) ?? [];
+      list.push(t);
+      childrenByParent.set(t.parentId, list);
+    }
+  }
+
+  // 4. 사람별 포맷된 텍스트 생성
+  const result: Record<string, string[]> = {};
+
+  for (const [personKey, userId] of Object.entries(userIds)) {
+    const lines: string[] = [];
+    const personTaskIds = new Set(
+      tasks.filter((t) => t.users.includes(userId)).map((t) => t.id)
+    );
+
+    // 4a. 최상위 업무 처리
+    for (const t of topLevel) {
+      const ismine = personTaskIds.has(t.id);
+      const myChildren = (childrenByParent.get(t.id) ?? []).filter((c) =>
+        personTaskIds.has(c.id)
+      );
+
+      if (ismine && myChildren.length > 0) {
+        lines.push(formatLine(t.title, t.category));
+        for (const c of myChildren) {
+          lines.push(`  - ${formatLine(c.title, c.category)}`);
+        }
+      } else if (ismine) {
+        lines.push(formatLine(t.title, t.category));
+      } else if (myChildren.length > 0) {
+        // 상위 업무 완료 안 됐지만 하위 업무만 완료된 경우
+        lines.push(t.title);
+        for (const c of myChildren) {
+          lines.push(`  - ${formatLine(c.title, c.category)}`);
+        }
+      }
+    }
+
+    // 4b. 부모가 쿼리 결과에 없는 하위 업무
+    for (const [parentId, children] of childrenByParent) {
+      if (topLevel.some((t) => t.id === parentId)) continue; // 이미 처리됨
+      const myChildren = children.filter((c) => personTaskIds.has(c.id));
+      if (myChildren.length === 0) continue;
+
+      const parentTitle =
+        parentTitles.get(parentId) ??
+        taskById.get(parentId)?.title ??
+        "(상위 업무)";
+      lines.push(parentTitle);
+      for (const c of myChildren) {
+        lines.push(`  - ${formatLine(c.title, c.category)}`);
+      }
+    }
+
+    result[personKey] = lines;
+  }
+
+  return result;
+}
+
+function formatLine(title: string, category: string | null): string {
+  return category ? `[${category}] ${title}` : title;
 }
 
 // 미팅 기록 DB에서 오늘 날짜의 기존 페이지 찾기

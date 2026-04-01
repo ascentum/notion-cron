@@ -11,7 +11,9 @@ Notion + Discord + GCS Pulse 연동 자동화 서버 (Vercel Cron 기반)
 매일 **00:00 KST (자정)** Vercel Cron이 트리거.
 
 ```
-Notion 업무 DB (오늘 완료 task)
+어센텀 업무 DB (완료일=오늘 & 완료=체크된 업무)
+    ↓
+사람별 업무 그룹핑 (PIC 속성 기준, 카테고리 태그 + 계층 구조 포함)
     ↓
 GPT-4o → 데일리 스니펫 생성 (박영민 / 조세연)
     ↓
@@ -47,7 +49,7 @@ Discord 버튼 클릭 시 처리:
 매주 **목요일 15:50 KST** Vercel Cron이 트리거.
 
 ```
-Notion 업무 DB (지난 7일 완료 task)
+어센텀 업무 DB (지난 7일간 완료된 업무, 카테고리 태그 포함)
     ↓
 GPT-4o → 핵심 흐름 3축 총평 생성
     ↓
@@ -66,7 +68,7 @@ CRON_SECRET=
 
 # Notion
 NOTION_API_KEY=
-NOTION_WORK_DB_ID=
+NOTION_WORK_DB_ID=          # 어센텀 업무 DB
 NOTION_MEETING_DB_ID=
 NOTION_TEMPLATE_ID=
 NOTION_USER_YOUNGMIN=
