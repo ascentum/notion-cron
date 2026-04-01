@@ -111,14 +111,12 @@ export async function GET(req: NextRequest) {
     // "2️⃣" 헤딩 뒤에 콘텐츠 삽입
     const insertAfterBlockId = findHeadingInBlocks(topBlocks, "2️⃣");
     const contentBlocks = buildContentBlocks(overview, startShort, endShort);
-    if (insertAfterBlockId) {
-      await appendContent(pageId, contentBlocks, insertAfterBlockId);
-    } else {
-      await appendContent(pageId, contentBlocks);
-    }
+    const appendedBlocks = insertAfterBlockId
+      ? await appendContent(pageId, contentBlocks, insertAfterBlockId)
+      : await appendContent(pageId, contentBlocks);
 
-    // 8. 토글 블록에 column 추가 + placeholder 삭제
-    const toggleBlockId = findToggleInBlocks(topBlocks);
+    // 8. 방금 추가된 블록에서 토글 ID 추출
+    const toggleBlockId = findToggleInBlocks(appendedBlocks);
     if (toggleBlockId) {
       const columnBlocks = buildColumnBlocks(summarizedDaily);
       await appendContent(toggleBlockId, columnBlocks);
