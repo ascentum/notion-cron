@@ -59,21 +59,35 @@ async function handleSlashCommand(interaction: any, req: NextRequest) {
   const commandName: string = interaction.data?.name ?? "";
 
   if (commandName === "snippet") {
+    // /snippet person:youngmin 처럼 개인 지정 가능
+    const personOption = interaction.data?.options?.find(
+      (o: any) => o.name === "person"
+    )?.value as string | undefined;
+
     const baseUrl = new URL(req.url).origin;
+    const personParam = personOption ? `&person=${personOption}` : "";
     after(async () => {
       try {
-        await fetch(`${baseUrl}/api/daily-snippet?action=send`, {
-          headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
-        });
+        await fetch(
+          `${baseUrl}/api/daily-snippet?action=send${personParam}`,
+          {
+            headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
+          }
+        );
       } catch (err) {
         console.error("[slash/snippet] trigger failed:", err);
       }
     });
 
+    const targetLabel = personOption
+      ? personOption === "youngmin"
+        ? "박영민"
+        : "조세연"
+      : "전체";
     return NextResponse.json({
       type: 4,
       data: {
-        content: "⚡ 스니펫 강제 실행을 시작했어요! 잠시 후 채널에서 확인하세요.",
+        content: `⚡ 스니펫 강제 실행 (${targetLabel})을 시작했어요! 잠시 후 채널에서 확인하세요.`,
         flags: 64, // ephemeral
       },
     });
@@ -135,6 +149,20 @@ async function handleButtonClick(interaction: any) {
           },
         ],
       },
+    });
+  }
+
+  // ④ 건너뛰기 — GCS 게시 없이 스킵
+  if (action === "skip") {
+    await editDiscordMessage(
+      CHANNEL_ID,
+      messageId,
+      [doneEmbed({ ...originalEmbed, color: 0x95a5a6 }, "⏭️ 건너뛰기 — 게시하지 않음")],
+      []
+    );
+    return NextResponse.json({
+      type: 4,
+      data: { content: "⏭️ 이 스니펫은 건너뛰었어요.", flags: 64 },
     });
   }
 

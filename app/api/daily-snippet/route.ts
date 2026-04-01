@@ -40,6 +40,11 @@ export async function GET(req: NextRequest) {
   const now = new Date();
   // ?action=send 또는 ?action=timeout 으로 강제 실행 (테스트용)
   const forceAction = req.nextUrl.searchParams.get("action");
+  // ?person=youngmin 또는 ?person=seyeon 으로 특정 사람만 실행
+  const targetPerson = req.nextUrl.searchParams.get("person") as
+    | "youngmin"
+    | "seyeon"
+    | null;
   const isTimeoutRun = forceAction
     ? forceAction === "timeout"
     : now.getUTCMinutes() >= 20; // 13:00 UTC = 전송 / 13:30 UTC = 타임아웃 체크
@@ -47,15 +52,43 @@ export async function GET(req: NextRequest) {
   if (isTimeoutRun) {
     return handleTimeoutCheck();
   } else {
-    return handleSendSnippets(now);
+    return handleSendSnippets(now, targetPerson);
   }
 }
 
 // ── 10:00pm KST: 스니펫 생성 & Discord 전송 ──────────────────────────────
 
-async function handleSendSnippets(now: Date) {
+async function handleSendSnippets(
+  now: Date,
+  targetPerson: "youngmin" | "seyeon" | null
+) {
   const todayIso = now.toISOString().split("T")[0];
   const isMonday = now.getUTCDay() === 1;
+  const shortDate = toShortDate(todayIso);
+
+  // 오늘 이미 전송된 스니펫이 있는지 확인 (중복 방지)
+  const alreadySent = await getAlreadySentPersons(shortDate, "데일리");
+  console.log(`[daily-snippet] already sent today: ${[...alreadySent].join(", ") || "none"}`);
+
+  // 대상 사람 결정
+  const targets: ("youngmin" | "seyeon")[] = targetPerson
+    ? [targetPerson]
+    : ["youngmin", "seyeon"];
+
+  // 이미 전송된 사람 제외 (단, targetPerson 직접 지정 시에는 강제 재전송)
+  const filteredTargets = targetPerson
+    ? targets
+    : targets.filter((p) => !alreadySent.has(p));
+
+  if (filteredTargets.length === 0) {
+    console.log("[daily-snippet] all targets already have snippets, skipping");
+    return NextResponse.json({
+      success: true,
+      date: todayIso,
+      skipped: true,
+      reason: "all targets already have snippets for today",
+    });
+  }
 
   // 오늘 업무 페이지 조회
   const workPages = await getWorkPages(todayIso, todayIso);
@@ -78,27 +111,20 @@ async function handleSendSnippets(now: Date) {
     );
   }
 
-  const shortDate = toShortDate(todayIso);
-
   // 일간 스니펫 Discord 전송 (태스크 있는 사람만, 없으면 경고)
   const jobs: Promise<void>[] = [];
-  if (youngminTasks.length > 0) {
-    jobs.push(
-      generateDailySnippetContent("박영민", todayIso, youngminTasks).then(
-        (content) => sendSnippetMessage(content, "youngmin", "daily", shortDate)
-      )
-    );
-  } else {
-    jobs.push(sendNoTaskWarning("youngmin", shortDate));
-  }
-  if (seyeonTasks.length > 0) {
-    jobs.push(
-      generateDailySnippetContent("조세연", todayIso, seyeonTasks).then(
-        (content) => sendSnippetMessage(content, "seyeon", "daily", shortDate)
-      )
-    );
-  } else {
-    jobs.push(sendNoTaskWarning("seyeon", shortDate));
+  for (const person of filteredTargets) {
+    const tasks = person === "youngmin" ? youngminTasks : seyeonTasks;
+    if (tasks.length > 0) {
+      const nameKo = person === "youngmin" ? "박영민" : "조세연";
+      jobs.push(
+        generateDailySnippetContent(nameKo, todayIso, tasks).then((content) =>
+          sendSnippetMessage(content, person, "daily", shortDate)
+        )
+      );
+    } else {
+      jobs.push(sendNoTaskWarning(person, shortDate));
+    }
   }
   await Promise.all(jobs);
 
@@ -111,6 +137,7 @@ async function handleSendSnippets(now: Date) {
     success: true,
     date: todayIso,
     isMonday,
+    targets: filteredTargets,
     youngminTasks: youngminTasks.length,
     seyeonTasks: seyeonTasks.length,
   });
@@ -236,6 +263,30 @@ async function handleTimeoutCheck() {
   return NextResponse.json({ success: true, action: "timeout-check", autoPosted });
 }
 
+// ── 중복 방지: 오늘 이미 전송된 스니펫 확인 ──────────────────────────────
+
+async function getAlreadySentPersons(
+  dateLabel: string,
+  typeKo: string
+): Promise<Set<"youngmin" | "seyeon">> {
+  const sent = new Set<"youngmin" | "seyeon">();
+  try {
+    const messages = await getChannelMessages(CHANNEL_ID, 30);
+    for (const msg of messages) {
+      const title: string = msg.embeds?.[0]?.title ?? "";
+      // 제목 형식: "📋 박영민 | 데일리 스니펫 (4/1)" 또는 "⚠️ ..."
+      if (!title.includes(dateLabel)) continue;
+      if (!title.includes(typeKo) && !title.includes("업무 없음")) continue;
+
+      if (title.includes("박영민")) sent.add("youngmin");
+      if (title.includes("조세연")) sent.add("seyeon");
+    }
+  } catch (err) {
+    console.error("[daily-snippet] failed to check existing messages:", err);
+  }
+  return sent;
+}
+
 // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
 async function sendNoTaskWarning(
@@ -293,6 +344,12 @@ async function sendSnippetMessage(
           style: 2, // SECONDARY (회색)
           label: "수정하기 ✏️",
           custom_id: `edit:${person}:${type}`,
+        },
+        {
+          type: 2,
+          style: 4, // DANGER (빨강)
+          label: "건너뛰기 ⏭️",
+          custom_id: `skip:${person}:${type}`,
         },
       ],
     },
