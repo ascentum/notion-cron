@@ -124,125 +124,237 @@ export function getTaskParentId(page: any): string | null {
   return relationProp.relation?.[0]?.id ?? null;
 }
 
-// 단일 페이지의 제목 조회 (부모 업무 제목 가져올 때 사용)
-export async function fetchPageTitle(pageId: string): Promise<string> {
-  const page = await notion.pages.retrieve({ page_id: pageId });
-  return getTaskTitle(page as any);
-}
-
-// 업무 페이지를 계층 구조로 변환하고 사람별 포맷된 텍스트 반환
-interface TaskInfo {
+export interface TaskInfo {
   id: string;
   title: string;
   category: string | null;
   parentId: string | null;
   users: string[];
-  date: string | null;
+  isInScope: boolean;
+  sourceIndex: number;
+}
+
+const PARENT_FETCH_CONCURRENCY = 3;
+const FALLBACK_PARENT_TITLE = "(상위 업무)";
+const ancestorTaskCache = new Map<string, Promise<TaskInfo>>();
+
+function toTaskInfo(
+  page: any,
+  options: { isInScope: boolean; sourceIndex: number }
+): TaskInfo {
+  return {
+    id: page.id as string,
+    title: getTaskTitle(page) || FALLBACK_PARENT_TITLE,
+    category: getTaskCategory(page),
+    parentId: getTaskParentId(page),
+    users: getPageUsers(page),
+    isInScope: options.isInScope,
+    sourceIndex: options.sourceIndex,
+  };
+}
+
+function createFallbackTask(pageId: string): TaskInfo {
+  return {
+    id: pageId,
+    title: FALLBACK_PARENT_TITLE,
+    category: null,
+    parentId: null,
+    users: [],
+    isInScope: false,
+    sourceIndex: Number.POSITIVE_INFINITY,
+  };
+}
+
+async function fetchAncestorTask(pageId: string): Promise<TaskInfo> {
+  const cached = ancestorTaskCache.get(pageId);
+  if (cached) return cached;
+
+  const promise = notion.pages
+    .retrieve({ page_id: pageId })
+    .then((page) =>
+      toTaskInfo(page as any, {
+        isInScope: false,
+        sourceIndex: Number.POSITIVE_INFINITY,
+      })
+    )
+    .catch(() => {
+      ancestorTaskCache.delete(pageId);
+      return createFallbackTask(pageId);
+    });
+
+  ancestorTaskCache.set(pageId, promise);
+  return promise;
+}
+
+export async function mapWithConcurrencyLimit<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return [];
+
+  const results = new Array<R>(items.length);
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  let nextIndex = 0;
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex++;
+        results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+      }
+    })
+  );
+
+  return results;
+}
+
+async function loadAncestorTasks(initialTasks: TaskInfo[]): Promise<TaskInfo[]> {
+  const taskById = new Map(initialTasks.map((task) => [task.id, task]));
+  const ancestors: TaskInfo[] = [];
+  const pendingParentIds = new Set<string>();
+
+  for (const task of initialTasks) {
+    if (task.parentId && !taskById.has(task.parentId)) {
+      pendingParentIds.add(task.parentId);
+    }
+  }
+
+  while (pendingParentIds.size > 0) {
+    const batchIds = [...pendingParentIds];
+    pendingParentIds.clear();
+
+    const fetchedAncestors = await mapWithConcurrencyLimit(
+      batchIds,
+      PARENT_FETCH_CONCURRENCY,
+      (pageId) => fetchAncestorTask(pageId)
+    );
+
+    for (const ancestor of fetchedAncestors) {
+      if (taskById.has(ancestor.id)) continue;
+
+      taskById.set(ancestor.id, ancestor);
+      ancestors.push(ancestor);
+
+      if (ancestor.parentId && !taskById.has(ancestor.parentId)) {
+        pendingParentIds.add(ancestor.parentId);
+      }
+    }
+  }
+
+  return ancestors;
+}
+
+function formatIndentedLine(
+  title: string,
+  category: string | null,
+  depth: number
+): string {
+  const text = formatLine(title, category);
+  if (depth === 0) return text;
+  return `${"  ".repeat(depth)}- ${text}`;
+}
+
+export function formatTaskTreeByUser(
+  tasks: TaskInfo[],
+  userIds: Record<string, string>
+): Record<string, string[]> {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const childrenByParent = new Map<string, TaskInfo[]>();
+
+  for (const task of tasks) {
+    if (!task.parentId || !taskById.has(task.parentId)) continue;
+
+    const siblings = childrenByParent.get(task.parentId) ?? [];
+    siblings.push(task);
+    childrenByParent.set(task.parentId, siblings);
+  }
+
+  const sortKeyCache = new Map<string, number>();
+  const visiting = new Set<string>();
+
+  const getSortKey = (taskId: string): number => {
+    const cached = sortKeyCache.get(taskId);
+    if (cached !== undefined) return cached;
+
+    if (visiting.has(taskId)) {
+      return taskById.get(taskId)?.sourceIndex ?? Number.POSITIVE_INFINITY;
+    }
+
+    visiting.add(taskId);
+    const task = taskById.get(taskId);
+    let key = task?.sourceIndex ?? Number.POSITIVE_INFINITY;
+
+    for (const child of childrenByParent.get(taskId) ?? []) {
+      key = Math.min(key, getSortKey(child.id));
+    }
+
+    visiting.delete(taskId);
+    sortKeyCache.set(taskId, key);
+    return key;
+  };
+
+  for (const children of childrenByParent.values()) {
+    children.sort((a, b) => getSortKey(a.id) - getSortKey(b.id));
+  }
+
+  const rootTasks = tasks
+    .filter((task) => !task.parentId || !taskById.has(task.parentId))
+    .sort((a, b) => getSortKey(a.id) - getSortKey(b.id));
+
+  const results: Record<string, string[]> = {};
+
+  for (const [personKey, userId] of Object.entries(userIds)) {
+    const ownTaskIds = new Set(
+      tasks
+        .filter((task) => task.isInScope && task.users.includes(userId))
+        .map((task) => task.id)
+    );
+    const visibleTaskIds = new Set<string>();
+
+    for (const taskId of ownTaskIds) {
+      const lineage = new Set<string>();
+      let currentId: string | null = taskId;
+
+      while (currentId && !lineage.has(currentId)) {
+        visibleTaskIds.add(currentId);
+        lineage.add(currentId);
+        currentId = taskById.get(currentId)?.parentId ?? null;
+      }
+    }
+
+    const lines: string[] = [];
+    const render = (task: TaskInfo, depth: number, branchPath: Set<string>) => {
+      if (!visibleTaskIds.has(task.id) || branchPath.has(task.id)) return;
+
+      lines.push(formatIndentedLine(task.title, task.category, depth));
+
+      const nextPath = new Set(branchPath);
+      nextPath.add(task.id);
+      for (const child of childrenByParent.get(task.id) ?? []) {
+        render(child, depth + 1, nextPath);
+      }
+    };
+
+    for (const rootTask of rootTasks) {
+      render(rootTask, 0, new Set());
+    }
+
+    results[personKey] = lines;
+  }
+
+  return results;
 }
 
 export async function buildFormattedTasks(
   pages: any[],
-  userIds: Record<string, string> // { "youngmin": YOUNGMIN_ID, "seyeon": SEYEON_ID }
+  userIds: Record<string, string>
 ): Promise<Record<string, string[]>> {
-  // 1. 모든 페이지에서 기본 정보 추출
-  const tasks: TaskInfo[] = pages.map((page) => ({
-    id: page.id as string,
-    title: getTaskTitle(page),
-    category: getTaskCategory(page),
-    parentId: getTaskParentId(page),
-    users: getPageUsers(page),
-    date: getPageDate(page),
-  }));
-
-  const taskById = new Map(tasks.map((t) => [t.id, t]));
-
-  // 2. 쿼리 결과에 없는 부모 ID 수집 → 제목 일괄 조회
-  const missingParentIds = new Set<string>();
-  for (const t of tasks) {
-    if (t.parentId && !taskById.has(t.parentId)) {
-      missingParentIds.add(t.parentId);
-    }
-  }
-
-  const parentTitles = new Map<string, string>();
-  if (missingParentIds.size > 0) {
-    await Promise.all(
-      [...missingParentIds].map(async (pid) => {
-        try {
-          parentTitles.set(pid, await fetchPageTitle(pid));
-        } catch {
-          parentTitles.set(pid, "(상위 업무)");
-        }
-      })
-    );
-  }
-
-  // 3. 계층 구조 빌드
-  const childrenByParent = new Map<string, TaskInfo[]>();
-  const topLevel: TaskInfo[] = [];
-
-  for (const t of tasks) {
-    if (!t.parentId) {
-      topLevel.push(t);
-    } else {
-      const list = childrenByParent.get(t.parentId) ?? [];
-      list.push(t);
-      childrenByParent.set(t.parentId, list);
-    }
-  }
-
-  // 4. 사람별 포맷된 텍스트 생성
-  const result: Record<string, string[]> = {};
-
-  for (const [personKey, userId] of Object.entries(userIds)) {
-    const lines: string[] = [];
-    const personTaskIds = new Set(
-      tasks.filter((t) => t.users.includes(userId)).map((t) => t.id)
-    );
-
-    // 4a. 최상위 업무 처리
-    for (const t of topLevel) {
-      const ismine = personTaskIds.has(t.id);
-      const myChildren = (childrenByParent.get(t.id) ?? []).filter((c) =>
-        personTaskIds.has(c.id)
-      );
-
-      if (ismine && myChildren.length > 0) {
-        lines.push(formatLine(t.title, t.category));
-        for (const c of myChildren) {
-          lines.push(`  - ${formatLine(c.title, c.category)}`);
-        }
-      } else if (ismine) {
-        lines.push(formatLine(t.title, t.category));
-      } else if (myChildren.length > 0) {
-        // 상위 업무 완료 안 됐지만 하위 업무만 완료된 경우
-        lines.push(t.title);
-        for (const c of myChildren) {
-          lines.push(`  - ${formatLine(c.title, c.category)}`);
-        }
-      }
-    }
-
-    // 4b. 부모가 쿼리 결과에 없는 하위 업무
-    for (const [parentId, children] of childrenByParent) {
-      if (topLevel.some((t) => t.id === parentId)) continue; // 이미 처리됨
-      const myChildren = children.filter((c) => personTaskIds.has(c.id));
-      if (myChildren.length === 0) continue;
-
-      const parentTitle =
-        parentTitles.get(parentId) ??
-        taskById.get(parentId)?.title ??
-        "(상위 업무)";
-      lines.push(parentTitle);
-      for (const c of myChildren) {
-        lines.push(`  - ${formatLine(c.title, c.category)}`);
-      }
-    }
-
-    result[personKey] = lines;
-  }
-
-  return result;
+  const scopedTasks = pages.map((page, index) =>
+    toTaskInfo(page, { isInScope: true, sourceIndex: index })
+  );
+  const ancestorTasks = await loadAncestorTasks(scopedTasks);
+  return formatTaskTreeByUser([...scopedTasks, ...ancestorTasks], userIds);
 }
 
 function formatLine(title: string, category: string | null): string {
