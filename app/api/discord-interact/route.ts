@@ -68,12 +68,19 @@ async function handleSlashCommand(interaction: any, req: NextRequest) {
     const personParam = personOption ? `&person=${personOption}` : "";
     after(async () => {
       try {
-        await fetch(
+        const response = await fetch(
           `${baseUrl}/api/daily-snippet?action=send${personParam}`,
           {
             headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
           }
         );
+        if (!response.ok) {
+          console.error(
+            "[slash/snippet] trigger failed:",
+            response.status,
+            await response.text()
+          );
+        }
       } catch (err) {
         console.error("[slash/snippet] trigger failed:", err);
       }
