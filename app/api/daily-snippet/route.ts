@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   getWorkPages,
-  getAllBlocks,
-  extractCheckedTodos,
-  getPageUsers,
   getPageDate,
+  buildFormattedTasks,
 } from "@/lib/notion";
 import {
   generateDailySnippetContent,
@@ -29,7 +27,7 @@ const YOUNGMIN_ID = process.env.NOTION_USER_YOUNGMIN!;
 const SEYEON_ID = process.env.NOTION_USER_SEYEON!;
 const GCS_TOKEN_YOUNGMIN = process.env.GCS_API_TOKEN_YOUNGMIN!;
 const GCS_TOKEN_SEYEON = process.env.GCS_API_TOKEN_SEYEON!;
-const BATCH_SIZE = 3;
+const USER_IDS = { youngmin: YOUNGMIN_ID, seyeon: SEYEON_ID };
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -90,26 +88,14 @@ async function handleSendSnippets(
     });
   }
 
-  // 오늘 업무 페이지 조회
+  // 오늘 완료된 업무 조회 (어센텀 업무 DB에서 완료일=오늘 & 완료=true)
   const workPages = await getWorkPages(todayIso, todayIso);
-  console.log(`[daily-snippet] ${workPages.length} pages for ${todayIso}`);
+  console.log(`[daily-snippet] ${workPages.length} tasks for ${todayIso}`);
 
-  // 배치 처리로 각 페이지의 완료 task 파싱
-  const youngminTasks: string[] = [];
-  const seyeonTasks: string[] = [];
-
-  for (let i = 0; i < workPages.length; i += BATCH_SIZE) {
-    const batch = workPages.slice(i, i + BATCH_SIZE);
-    await Promise.all(
-      batch.map(async (page: any) => {
-        const users = getPageUsers(page);
-        const blocks = await getAllBlocks(page.id, 2);
-        const tasks = extractCheckedTodos(blocks);
-        if (users.includes(YOUNGMIN_ID)) youngminTasks.push(...tasks);
-        if (users.includes(SEYEON_ID)) seyeonTasks.push(...tasks);
-      })
-    );
-  }
+  // 계층 구조 + 카테고리 포맷으로 사람별 업무 목록 생성
+  const tasksByPerson = await buildFormattedTasks(workPages, USER_IDS);
+  const youngminTasks = tasksByPerson.youngmin ?? [];
+  const seyeonTasks = tasksByPerson.seyeon ?? [];
 
   // 일간 스니펫 Discord 전송 (태스크 있는 사람만, 없으면 경고)
   const jobs: Promise<void>[] = [];
@@ -154,23 +140,22 @@ async function handleWeeklySnippets(
 
   const weeklyPages = await getWorkPages(startIso, todayIso);
 
-  // 날짜별로 그룹화
+  // 날짜별로 그룹화하여 사람별 포맷 생성
+  const pagesByDate = new Map<string, any[]>();
+  for (const page of weeklyPages) {
+    const date = getPageDate(page) ?? todayIso;
+    const list = pagesByDate.get(date) ?? [];
+    list.push(page);
+    pagesByDate.set(date, list);
+  }
+
   const byDate: Record<string, { youngmin: string[]; seyeon: string[] }> = {};
-
-  for (let i = 0; i < weeklyPages.length; i += BATCH_SIZE) {
-    const batch = weeklyPages.slice(i, i + BATCH_SIZE);
-    await Promise.all(
-      batch.map(async (page: any) => {
-        const date = getPageDate(page) ?? todayIso;
-        const users = getPageUsers(page);
-        const blocks = await getAllBlocks(page.id, 2);
-        const tasks = extractCheckedTodos(blocks);
-
-        if (!byDate[date]) byDate[date] = { youngmin: [], seyeon: [] };
-        if (users.includes(YOUNGMIN_ID)) byDate[date].youngmin.push(...tasks);
-        if (users.includes(SEYEON_ID)) byDate[date].seyeon.push(...tasks);
-      })
-    );
+  for (const [date, datePages] of pagesByDate) {
+    const tasksByPerson = await buildFormattedTasks(datePages, USER_IDS);
+    byDate[date] = {
+      youngmin: tasksByPerson.youngmin ?? [],
+      seyeon: tasksByPerson.seyeon ?? [],
+    };
   }
 
   const ymWeekly = Object.entries(byDate)
@@ -298,10 +283,10 @@ async function sendNoTaskWarning(
   const embed = {
     title: `⚠️ ${nameKo} | 오늘 기록된 업무 없음 (${dateLabel})`,
     description:
-      "오늘 완료한 업무에 체크가 없거나 Notion 페이지가 없어요!\n" +
-      "혹시 까먹으셨나요? Notion에서 체크 후 `/snippet` 명령어로 다시 실행할 수 있어요.",
+      "어센텀 업무 DB에 오늘 완료 처리된 업무가 없어요!\n" +
+      "혹시 까먹으셨나요? 업무의 '완료' 체크 후 `/snippet` 명령어로 다시 실행할 수 있어요.",
     color,
-    footer: { text: "업무를 체크한 뒤 /snippet 으로 강제 실행하세요" },
+    footer: { text: "업무를 완료 체크한 뒤 /snippet 으로 강제 실행하세요" },
   };
   await sendDiscordMessage(CHANNEL_ID, [embed], []);
 }

@@ -4,25 +4,40 @@ export const notion = new Client({
   auth: process.env.NOTION_API_KEY,
 });
 
-// 업무 DB에서 특정 날짜 범위의 페이지 목록 조회
+// 어센텀 업무 DB에서 특정 날짜 범위의 완료된 업무 목록 조회 (페이지네이션 지원)
 export async function getWorkPages(startDate: string, endDate: string) {
-  const response = await notion.databases.query({
-    database_id: process.env.NOTION_WORK_DB_ID!,
-    filter: {
-      and: [
-        {
-          property: "일정",
-          date: { on_or_after: startDate },
-        },
-        {
-          property: "일정",
-          date: { on_or_before: endDate },
-        },
-      ],
-    },
-    sorts: [{ property: "일정", direction: "ascending" }],
-  });
-  return response.results;
+  const allResults: any[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const response = await notion.databases.query({
+      database_id: process.env.NOTION_WORK_DB_ID!,
+      filter: {
+        and: [
+          {
+            property: "완료일",
+            date: { on_or_after: startDate },
+          },
+          {
+            property: "완료일",
+            date: { on_or_before: endDate },
+          },
+          {
+            property: "완료",
+            checkbox: { equals: true },
+          },
+        ],
+      },
+      sorts: [{ property: "완료일", direction: "ascending" }],
+      start_cursor: cursor,
+    });
+    allResults.push(...response.results);
+    cursor = response.has_more
+      ? (response.next_cursor ?? undefined)
+      : undefined;
+  } while (cursor);
+
+  return allResults;
 }
 
 // to_do를 포함할 수 있는 블록 타입만 재귀 조회 (heading, divider 등 불필요한 호출 제거)
@@ -74,18 +89,276 @@ export function extractCheckedTodos(blocks: any[]): string[] {
     .filter((text) => text.trim().length > 0);
 }
 
-// 페이지 사람 속성에서 User ID 목록 반환
+// 페이지 PIC 속성에서 User ID 목록 반환
 export function getPageUsers(page: any): string[] {
-  const peopleProp = page.properties?.["사람"];
+  const peopleProp = page.properties?.["PIC"];
   if (!peopleProp || peopleProp.type !== "people") return [];
   return peopleProp.people.map((p: any) => p.id);
 }
 
-// 페이지 날짜(일정) 반환
+// 페이지 완료일 반환
 export function getPageDate(page: any): string | null {
-  const dateProp = page.properties?.["일정"];
+  const dateProp = page.properties?.["완료일"];
   if (!dateProp || dateProp.type !== "date") return null;
   return dateProp.date?.start ?? null;
+}
+
+// 업무 아이템의 제목(이름) 반환
+export function getTaskTitle(page: any): string {
+  const titleProp = page.properties?.["이름"];
+  if (!titleProp || titleProp.type !== "title") return "";
+  return titleProp.title.map((rt: any) => rt.plain_text).join("");
+}
+
+// 업무 아이템의 카테고리 반환
+export function getTaskCategory(page: any): string | null {
+  const selectProp = page.properties?.["카테고리"];
+  if (!selectProp || selectProp.type !== "select") return null;
+  return selectProp.select?.name ?? null;
+}
+
+// 업무 아이템의 상위 항목 ID 반환 (없으면 null)
+export function getTaskParentId(page: any): string | null {
+  const relationProp = page.properties?.["상위 항목"];
+  if (!relationProp || relationProp.type !== "relation") return null;
+  return relationProp.relation?.[0]?.id ?? null;
+}
+
+export interface TaskInfo {
+  id: string;
+  title: string;
+  category: string | null;
+  parentId: string | null;
+  users: string[];
+  isInScope: boolean;
+  sourceIndex: number;
+}
+
+const PARENT_FETCH_CONCURRENCY = 3;
+const FALLBACK_PARENT_TITLE = "(상위 업무)";
+const ancestorTaskCache = new Map<string, Promise<TaskInfo>>();
+
+function toTaskInfo(
+  page: any,
+  options: { isInScope: boolean; sourceIndex: number }
+): TaskInfo {
+  return {
+    id: page.id as string,
+    title: getTaskTitle(page) || FALLBACK_PARENT_TITLE,
+    category: getTaskCategory(page),
+    parentId: getTaskParentId(page),
+    users: getPageUsers(page),
+    isInScope: options.isInScope,
+    sourceIndex: options.sourceIndex,
+  };
+}
+
+function createFallbackTask(pageId: string): TaskInfo {
+  return {
+    id: pageId,
+    title: FALLBACK_PARENT_TITLE,
+    category: null,
+    parentId: null,
+    users: [],
+    isInScope: false,
+    sourceIndex: Number.POSITIVE_INFINITY,
+  };
+}
+
+async function fetchAncestorTask(pageId: string): Promise<TaskInfo> {
+  const cached = ancestorTaskCache.get(pageId);
+  if (cached) return cached;
+
+  const promise = notion.pages
+    .retrieve({ page_id: pageId })
+    .then((page) =>
+      toTaskInfo(page as any, {
+        isInScope: false,
+        sourceIndex: Number.POSITIVE_INFINITY,
+      })
+    )
+    .catch(() => {
+      ancestorTaskCache.delete(pageId);
+      return createFallbackTask(pageId);
+    });
+
+  ancestorTaskCache.set(pageId, promise);
+  return promise;
+}
+
+export async function mapWithConcurrencyLimit<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return [];
+
+  const results = new Array<R>(items.length);
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  let nextIndex = 0;
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex++;
+        results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+      }
+    })
+  );
+
+  return results;
+}
+
+async function loadAncestorTasks(initialTasks: TaskInfo[]): Promise<TaskInfo[]> {
+  const taskById = new Map(initialTasks.map((task) => [task.id, task]));
+  const ancestors: TaskInfo[] = [];
+  const pendingParentIds = new Set<string>();
+
+  for (const task of initialTasks) {
+    if (task.parentId && !taskById.has(task.parentId)) {
+      pendingParentIds.add(task.parentId);
+    }
+  }
+
+  while (pendingParentIds.size > 0) {
+    const batchIds = [...pendingParentIds];
+    pendingParentIds.clear();
+
+    const fetchedAncestors = await mapWithConcurrencyLimit(
+      batchIds,
+      PARENT_FETCH_CONCURRENCY,
+      (pageId) => fetchAncestorTask(pageId)
+    );
+
+    for (const ancestor of fetchedAncestors) {
+      if (taskById.has(ancestor.id)) continue;
+
+      taskById.set(ancestor.id, ancestor);
+      ancestors.push(ancestor);
+
+      if (ancestor.parentId && !taskById.has(ancestor.parentId)) {
+        pendingParentIds.add(ancestor.parentId);
+      }
+    }
+  }
+
+  return ancestors;
+}
+
+function formatIndentedLine(
+  title: string,
+  category: string | null,
+  depth: number
+): string {
+  const text = formatLine(title, category);
+  if (depth === 0) return text;
+  return `${"  ".repeat(depth)}- ${text}`;
+}
+
+export function formatTaskTreeByUser(
+  tasks: TaskInfo[],
+  userIds: Record<string, string>
+): Record<string, string[]> {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const childrenByParent = new Map<string, TaskInfo[]>();
+
+  for (const task of tasks) {
+    if (!task.parentId || !taskById.has(task.parentId)) continue;
+
+    const siblings = childrenByParent.get(task.parentId) ?? [];
+    siblings.push(task);
+    childrenByParent.set(task.parentId, siblings);
+  }
+
+  const sortKeyCache = new Map<string, number>();
+  const visiting = new Set<string>();
+
+  const getSortKey = (taskId: string): number => {
+    const cached = sortKeyCache.get(taskId);
+    if (cached !== undefined) return cached;
+
+    if (visiting.has(taskId)) {
+      return taskById.get(taskId)?.sourceIndex ?? Number.POSITIVE_INFINITY;
+    }
+
+    visiting.add(taskId);
+    const task = taskById.get(taskId);
+    let key = task?.sourceIndex ?? Number.POSITIVE_INFINITY;
+
+    for (const child of childrenByParent.get(taskId) ?? []) {
+      key = Math.min(key, getSortKey(child.id));
+    }
+
+    visiting.delete(taskId);
+    sortKeyCache.set(taskId, key);
+    return key;
+  };
+
+  for (const children of childrenByParent.values()) {
+    children.sort((a, b) => getSortKey(a.id) - getSortKey(b.id));
+  }
+
+  const rootTasks = tasks
+    .filter((task) => !task.parentId || !taskById.has(task.parentId))
+    .sort((a, b) => getSortKey(a.id) - getSortKey(b.id));
+
+  const results: Record<string, string[]> = {};
+
+  for (const [personKey, userId] of Object.entries(userIds)) {
+    const ownTaskIds = new Set(
+      tasks
+        .filter((task) => task.isInScope && task.users.includes(userId))
+        .map((task) => task.id)
+    );
+    const visibleTaskIds = new Set<string>();
+
+    for (const taskId of ownTaskIds) {
+      const lineage = new Set<string>();
+      let currentId: string | null = taskId;
+
+      while (currentId && !lineage.has(currentId)) {
+        visibleTaskIds.add(currentId);
+        lineage.add(currentId);
+        currentId = taskById.get(currentId)?.parentId ?? null;
+      }
+    }
+
+    const lines: string[] = [];
+    const render = (task: TaskInfo, depth: number, branchPath: Set<string>) => {
+      if (!visibleTaskIds.has(task.id) || branchPath.has(task.id)) return;
+
+      lines.push(formatIndentedLine(task.title, task.category, depth));
+
+      const nextPath = new Set(branchPath);
+      nextPath.add(task.id);
+      for (const child of childrenByParent.get(task.id) ?? []) {
+        render(child, depth + 1, nextPath);
+      }
+    };
+
+    for (const rootTask of rootTasks) {
+      render(rootTask, 0, new Set());
+    }
+
+    results[personKey] = lines;
+  }
+
+  return results;
+}
+
+export async function buildFormattedTasks(
+  pages: any[],
+  userIds: Record<string, string>
+): Promise<Record<string, string[]>> {
+  const scopedTasks = pages.map((page, index) =>
+    toTaskInfo(page, { isInScope: true, sourceIndex: index })
+  );
+  const ancestorTasks = await loadAncestorTasks(scopedTasks);
+  return formatTaskTreeByUser([...scopedTasks, ...ancestorTasks], userIds);
+}
+
+function formatLine(title: string, category: string | null): string {
+  return category ? `[${category}] ${title}` : title;
 }
 
 // 미팅 기록 DB에서 오늘 날짜의 기존 페이지 찾기
