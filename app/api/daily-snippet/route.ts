@@ -35,22 +35,30 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const now = new Date();
-  // ?action=send 또는 ?action=timeout 으로 강제 실행 (테스트용)
-  const forceAction = req.nextUrl.searchParams.get("action");
-  // ?person=youngmin 또는 ?person=seyeon 으로 특정 사람만 실행
-  const targetPerson = req.nextUrl.searchParams.get("person") as
-    | "youngmin"
-    | "seyeon"
-    | null;
-  const isTimeoutRun = forceAction
-    ? forceAction === "timeout"
-    : now.getUTCMinutes() >= 20; // 13:00 UTC = 전송 / 13:30 UTC = 타임아웃 체크
+  try {
+    const now = new Date();
+    // ?action=send 또는 ?action=timeout 으로 강제 실행 (테스트용)
+    const forceAction = req.nextUrl.searchParams.get("action");
+    // ?person=youngmin 또는 ?person=seyeon 으로 특정 사람만 실행
+    const targetPerson = req.nextUrl.searchParams.get("person") as
+      | "youngmin"
+      | "seyeon"
+      | null;
+    const isTimeoutRun = forceAction
+      ? forceAction === "timeout"
+      : now.getUTCMinutes() >= 20; // 13:00 UTC = 전송 / 13:30 UTC = 타임아웃 체크
 
-  if (isTimeoutRun) {
-    return handleTimeoutCheck();
-  } else {
-    return handleSendSnippets(now, targetPerson);
+    if (isTimeoutRun) {
+      return handleTimeoutCheck();
+    } else {
+      return handleSendSnippets(now, targetPerson);
+    }
+  } catch (error) {
+    console.error("[daily-snippet] route failed:", error);
+    return NextResponse.json(
+      { error: String(error) },
+      { status: 500 }
+    );
   }
 }
 
