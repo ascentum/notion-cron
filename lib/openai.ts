@@ -18,7 +18,8 @@ export interface SummarizedDay {
 }
 
 export async function generateWeeklySummary(
-  dailySummaries: DailySummary[]
+  dailySummaries: DailySummary[],
+  range: { startDate: string; endDate: string }
 ): Promise<{ overview: string; summarizedDaily: SummarizedDay[] }> {
   // 프롬프트용 데이터 직렬화
   const rawData = dailySummaries
@@ -37,7 +38,7 @@ export async function generateWeeklySummary(
     .join("\n\n");
 
   const overviewPrompt = `
-다음은 지난 1주일간(목요일~목요일) 어센텀 팀의 완료된 업무 목록이야.
+다음은 ${range.startDate}~${range.endDate} (KST 기준) 어센텀 팀의 완료된 업무 목록이야.
 이 내용을 바탕으로 **핵심 흐름 3가지 축**으로 총평을 작성해줘.
 - 각 축은 "① 제목 — 설명" 형식
 - 각 축은 별도 줄에 작성 (줄바꿈으로 구분)

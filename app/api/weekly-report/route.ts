@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   notion,
-  getWorkPages,
-  getPageUsers,
-  getPageDate,
-  getTaskTitle,
-  getTaskCategory,
+  formatWorkItem,
+  getWorkItems,
   createMeetingPage,
   waitForTemplateBlocks,
   appendContent,
@@ -16,6 +13,7 @@ import {
   deleteBlock,
 } from "@/lib/notion";
 import { generateWeeklySummary, SummarizedDay } from "@/lib/openai";
+import { getKstDateInfo, getPreviousWeekDateRange } from "@/lib/time";
 
 // Vercel Hobby: 최대 60초
 export const maxDuration = 60;
@@ -28,40 +26,41 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // 1. 날짜 범위 계산 (오늘 기준 7일 전 ~ 오늘)
-    const today = new Date();
-    const sevenDaysAgo = new Date(today);
-    sevenDaysAgo.setDate(today.getDate() - 7);
-
-    const todayIso = today.toISOString().split("T")[0];
-    const startIso = sevenDaysAgo.toISOString().split("T")[0];
+    // 1. 날짜 범위 계산 (KST 기준, 오늘 제외 직전 7일)
+    const { isoDate: todayIso } = getKstDateInfo();
+    const { startIso, endIso } = getPreviousWeekDateRange(todayIso);
 
     const YOUNGMIN_ID = process.env.NOTION_USER_YOUNGMIN!;
     const SEYEON_ID = process.env.NOTION_USER_SEYEON!;
 
-    // 2. 어센텀 업무 DB에서 해당 기간의 완료된 업무 가져오기
-    const workPages = await getWorkPages(startIso, todayIso);
-    console.log(`Found ${workPages.length} completed tasks from ${startIso} to ${todayIso}`);
+    // 2. 레거시 + 최신 업무 DB에서 해당 기간의 완료된 업무 가져오기
+    const workItems = await getWorkItems(startIso, endIso);
+    console.log(`Found ${workItems.length} completed tasks from ${startIso} to ${endIso}`);
 
     // 3. 날짜별 그룹핑 → 사람별 업무 목록 구성
-    const byDate: Record<string, { youngmin: string[]; seyeon: string[]; all: string[] }> = {};
+    const byDate = new Map<
+      string,
+      { youngmin: string[]; seyeon: string[]; all: string[] }
+    >();
 
-    for (const page of workPages) {
-      const date = getPageDate(page) ?? "날짜 불명";
-      const users = getPageUsers(page);
-      const cat = getTaskCategory(page);
-      const title = getTaskTitle(page);
-      if (!title) continue;
+    for (const item of workItems) {
+      const date = item.date;
+      const formatted = formatWorkItem(item);
+      const entry = byDate.get(date) ?? {
+        youngmin: [],
+        seyeon: [],
+        all: [],
+      };
 
-      const formatted = cat ? `[${cat}] ${title}` : title;
-
-      if (!byDate[date]) byDate[date] = { youngmin: [], seyeon: [], all: [] };
-      byDate[date].all.push(formatted);
-      if (users.includes(YOUNGMIN_ID)) byDate[date].youngmin.push(formatted);
-      if (users.includes(SEYEON_ID)) byDate[date].seyeon.push(formatted);
+      entry.all.push(formatted);
+      if (item.users.includes(YOUNGMIN_ID)) entry.youngmin.push(formatted);
+      if (item.users.includes(SEYEON_ID)) entry.seyeon.push(formatted);
+      byDate.set(date, entry);
     }
 
-    const dailySummaries = Object.entries(byDate).map(([date, tasks]) => ({
+    const dailySummaries = [...byDate.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, tasks]) => ({
       date,
       youngminTasks: tasks.youngmin,
       seyeonTasks: tasks.seyeon,
@@ -75,11 +74,14 @@ export async function GET(req: NextRequest) {
     }
 
     // 4. OpenAI로 총평 + 데일리 요약 생성
-    const { overview, summarizedDaily } = await generateWeeklySummary(dailySummaries);
+    const { overview, summarizedDaily } = await generateWeeklySummary(dailySummaries, {
+      startDate: startIso,
+      endDate: endIso,
+    });
 
     // 5. 날짜 범위 (short format)
     const startShort = toShortDate(startIso);
-    const endShort = toShortDate(todayIso);
+    const endShort = toShortDate(endIso);
 
     // 6. 기존 페이지 찾기 또는 템플릿으로 새로 생성
     let pageId: string;

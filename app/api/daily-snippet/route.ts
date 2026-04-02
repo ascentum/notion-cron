@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  getWorkPages,
+  formatWorkItem,
+  getLegacyWorkItemsForDateRange,
   getPageDate,
+  getWorkPages,
+  splitWorkDateRanges,
   buildFormattedTasks,
 } from "@/lib/notion";
 import {
@@ -19,6 +22,7 @@ import {
   triggerDailyFeedback,
   triggerWeeklyFeedback,
 } from "@/lib/gcs";
+import { getKstDateInfo, getPreviousWeekDateRange } from "@/lib/time";
 
 export const maxDuration = 60;
 
@@ -62,14 +66,14 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// ── 10:00pm KST: 스니펫 생성 & Discord 전송 ──────────────────────────────
+// ── 00:00 KST: 스니펫 생성 & Discord 전송 ───────────────────────────────
 
 async function handleSendSnippets(
   now: Date,
   targetPerson: "youngmin" | "seyeon" | null
 ) {
-  const todayIso = now.toISOString().split("T")[0];
-  const isMonday = now.getUTCDay() === 1;
+  const { isoDate: todayIso, weekday } = getKstDateInfo(now);
+  const isMonday = weekday === 1;
   const shortDate = toShortDate(todayIso);
 
   // 오늘 이미 전송된 스니펫이 있는지 확인 (중복 방지)
@@ -124,7 +128,7 @@ async function handleSendSnippets(
 
   // 월요일: 주간 스니펫 추가 전송
   if (isMonday) {
-    await handleWeeklySnippets(now, todayIso, shortDate);
+    await handleWeeklySnippets(todayIso);
   }
 
   return NextResponse.json({
@@ -137,48 +141,70 @@ async function handleSendSnippets(
   });
 }
 
-async function handleWeeklySnippets(
-  now: Date,
-  todayIso: string,
-  todayShort: string
-) {
-  const sevenDaysAgo = new Date(now);
-  sevenDaysAgo.setUTCDate(now.getUTCDate() - 7);
-  const startIso = sevenDaysAgo.toISOString().split("T")[0];
+async function handleWeeklySnippets(todayIso: string) {
+  const { startIso, endIso } = getPreviousWeekDateRange(todayIso);
+  const ranges = splitWorkDateRanges(startIso, endIso);
 
-  const weeklyPages = await getWorkPages(startIso, todayIso);
+  const byDate = new Map<string, { youngmin: string[]; seyeon: string[] }>();
 
-  // 날짜별로 그룹화하여 사람별 포맷 생성
-  const pagesByDate = new Map<string, any[]>();
-  for (const page of weeklyPages) {
-    const date = getPageDate(page) ?? todayIso;
-    const list = pagesByDate.get(date) ?? [];
-    list.push(page);
-    pagesByDate.set(date, list);
+  for (const range of ranges) {
+    if (range.source === "latest") {
+      const latestPages = await getWorkPages(range.startDate, range.endDate);
+      const pagesByDate = new Map<string, any[]>();
+
+      for (const page of latestPages) {
+        const date = getPageDate(page) ?? range.endDate;
+        const entries = pagesByDate.get(date) ?? [];
+        entries.push(page);
+        pagesByDate.set(date, entries);
+      }
+
+      for (const [date, datePages] of [...pagesByDate.entries()].sort(([a], [b]) =>
+        a.localeCompare(b)
+      )) {
+        const tasksByPerson = await buildFormattedTasks(datePages, USER_IDS);
+        const entry = byDate.get(date) ?? { youngmin: [], seyeon: [] };
+
+        entry.youngmin.push(...(tasksByPerson.youngmin ?? []));
+        entry.seyeon.push(...(tasksByPerson.seyeon ?? []));
+        byDate.set(date, entry);
+      }
+
+      continue;
+    }
+
+    const legacyItems = await getLegacyWorkItemsForDateRange(
+      range.startDate,
+      range.endDate
+    );
+
+    for (const item of legacyItems) {
+      const entry = byDate.get(item.date) ?? { youngmin: [], seyeon: [] };
+      const formatted = formatWorkItem(item);
+
+      if (item.users.includes(YOUNGMIN_ID)) entry.youngmin.push(formatted);
+      if (item.users.includes(SEYEON_ID)) entry.seyeon.push(formatted);
+
+      byDate.set(item.date, entry);
+    }
   }
 
-  const byDate: Record<string, { youngmin: string[]; seyeon: string[] }> = {};
-  for (const [date, datePages] of pagesByDate) {
-    const tasksByPerson = await buildFormattedTasks(datePages, USER_IDS);
-    byDate[date] = {
-      youngmin: tasksByPerson.youngmin ?? [],
-      seyeon: tasksByPerson.seyeon ?? [],
-    };
-  }
+  const sortedByDate = [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b));
 
-  const ymWeekly = Object.entries(byDate)
-    .filter(([, v]) => v.youngmin.length > 0)
-    .map(([date, v]) => ({ date, tasks: v.youngmin }));
-  const syWeekly = Object.entries(byDate)
-    .filter(([, v]) => v.seyeon.length > 0)
-    .map(([date, v]) => ({ date, tasks: v.seyeon }));
+  const ymWeekly = sortedByDate
+    .filter(([, value]) => value.youngmin.length > 0)
+    .map(([date, value]) => ({ date, tasks: value.youngmin }));
+  const syWeekly = sortedByDate
+    .filter(([, value]) => value.seyeon.length > 0)
+    .map(([date, value]) => ({ date, tasks: value.seyeon }));
 
-  const weekLabel = `${toShortDate(startIso)}~${todayShort}`;
+  const endShort = toShortDate(endIso);
+  const weekLabel = `${toShortDate(startIso)}~${toShortDate(endIso)}`;
   const weeklyJobs: Promise<void>[] = [];
 
   if (ymWeekly.length > 0) {
     weeklyJobs.push(
-      generateWeeklySnippetContent("박영민", toShortDate(startIso), todayShort, ymWeekly).then(
+      generateWeeklySnippetContent("박영민", toShortDate(startIso), endShort, ymWeekly).then(
         (content) => sendSnippetMessage(content, "youngmin", "weekly", weekLabel)
       )
     );
@@ -187,7 +213,7 @@ async function handleWeeklySnippets(
   }
   if (syWeekly.length > 0) {
     weeklyJobs.push(
-      generateWeeklySnippetContent("조세연", toShortDate(startIso), todayShort, syWeekly).then(
+      generateWeeklySnippetContent("조세연", toShortDate(startIso), endShort, syWeekly).then(
         (content) => sendSnippetMessage(content, "seyeon", "weekly", weekLabel)
       )
     );
@@ -197,7 +223,7 @@ async function handleWeeklySnippets(
   await Promise.all(weeklyJobs);
 }
 
-// ── 10:30pm KST: 타임아웃 체크 & 자동 게시 ──────────────────────────────
+// ── 00:30 KST: 타임아웃 체크 & 자동 게시 ───────────────────────────────
 
 async function handleTimeoutCheck() {
   const messages = await getChannelMessages(CHANNEL_ID, 50);
