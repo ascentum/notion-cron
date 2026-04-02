@@ -27,6 +27,7 @@ GCS Pulse 게시 → AI 채점 자동 트리거
 **00:30 KST** 두 번째 Cron 실행 (외부 cron-job 서비스) — 30분 이내 무응답 메시지는 자동 게시 후 AI 채점.
 
 **월요일**에는 지난 7일 데이터를 모아 주간 스니펫도 함께 생성.
+주간 집계는 날짜 구간이 `2026-04-01`을 가로지를 경우 레거시 `업무 캘린더 DB`와 최신 `어센텀 업무 DB`를 함께 조회.
 
 ---
 
@@ -46,10 +47,11 @@ Discord 버튼 클릭 시 처리:
 
 ### 3. 주간 미팅 리포트 (`/api/weekly-report`)
 
-매주 **목요일 15:50 KST** Vercel Cron이 트리거.
+매주 **목요일 00:00 KST** Vercel Cron이 트리거.
 
 ```
-어센텀 업무 DB (지난 7일간 완료된 업무, 카테고리 태그 포함)
+업무 캘린더 DB (2026-03-31까지, 체크된 to_do만 완료로 집계) +
+어센텀 업무 DB (2026-04-01부터, 완료일 + 완료 체크 기준)
     ↓
 GPT-4o → 핵심 흐름 3축 총평 생성
     ↓
@@ -68,7 +70,9 @@ CRON_SECRET=
 
 # Notion
 NOTION_API_KEY=
-NOTION_WORK_DB_ID=          # 어센텀 업무 DB
+NOTION_WORK_DB_ID=          # 최신 어센텀 업무 DB
+NOTION_LEGACY_WORK_DB_ID=   # 레거시 업무 캘린더 DB
+NOTION_WORK_DB_CUTOFF_DATE=2026-04-01
 NOTION_MEETING_DB_ID=
 NOTION_TEMPLATE_ID=
 NOTION_USER_YOUNGMIN=
@@ -122,7 +126,7 @@ Vercel Cron 스케줄 (`vercel.json` 참고):
 |------|-------------|-----|
 | `/api/daily-snippet` | `0 15 * * *` | 매일 00:00 (자정) |
 | `/api/daily-snippet?action=timeout` | `30 15 * * *` | 매일 00:30 (외부 cron-job) |
-| `/api/weekly-report` | `50 6 * * 4` | 매주 목요일 15:50 |
+| `/api/weekly-report` | `0 15 * * 3` | 매주 목요일 00:00 |
 
 ---
 

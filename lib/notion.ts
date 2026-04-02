@@ -4,8 +4,118 @@ export const notion = new Client({
   auth: process.env.NOTION_API_KEY,
 });
 
-// 어센텀 업무 DB에서 특정 날짜 범위의 완료된 업무 목록 조회 (페이지네이션 지원)
-export async function getWorkPages(startDate: string, endDate: string) {
+export type WorkSource = "legacy" | "latest";
+export type WorkItemStatus = "completed" | "incomplete";
+
+export interface WorkDateRange {
+  source: WorkSource;
+  startDate: string;
+  endDate: string;
+}
+
+export interface WorkItem {
+  id: string;
+  pageId: string;
+  source: WorkSource;
+  status: WorkItemStatus;
+  date: string;
+  users: string[];
+  title: string;
+  category: string | null;
+  parentId: string | null;
+}
+
+export interface TodoItem {
+  text: string;
+  checked: boolean;
+}
+
+const DEFAULT_LEGACY_WORK_DB_ID = "26abd55c-4778-80b1-a96c-dc8cf9f1a0e4";
+const DEFAULT_WORK_DB_CUTOFF_DATE = "2026-04-01";
+const LEGACY_BLOCK_FETCH_CONCURRENCY = 3;
+
+function getLegacyWorkDatabaseId(): string {
+  return process.env.NOTION_LEGACY_WORK_DB_ID ?? DEFAULT_LEGACY_WORK_DB_ID;
+}
+
+function getWorkDbCutoffDate(): string {
+  return process.env.NOTION_WORK_DB_CUTOFF_DATE ?? DEFAULT_WORK_DB_CUTOFF_DATE;
+}
+
+function shiftIsoDate(isoDate: string, days: number): string {
+  const date = new Date(`${isoDate}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+export function splitWorkDateRanges(
+  startDate: string,
+  endDate: string,
+  cutoffDate: string = getWorkDbCutoffDate()
+): WorkDateRange[] {
+  if (startDate > endDate) return [];
+
+  if (endDate < cutoffDate) {
+    return [{ source: "legacy", startDate, endDate }];
+  }
+  if (startDate >= cutoffDate) {
+    return [{ source: "latest", startDate, endDate }];
+  }
+
+  return [
+    {
+      source: "legacy",
+      startDate,
+      endDate: shiftIsoDate(cutoffDate, -1),
+    },
+    {
+      source: "latest",
+      startDate: cutoffDate,
+      endDate,
+    },
+  ];
+}
+
+function getPeoplePropertyIds(page: any, propertyName: string): string[] {
+  const peopleProp = page.properties?.[propertyName];
+  if (!peopleProp) return [];
+  if (peopleProp.type === "people") {
+    return peopleProp.people.map((person: any) => person.id);
+  }
+  return [];
+}
+
+function getDateProperty(page: any, propertyName: string): string | null {
+  const dateProp = page.properties?.[propertyName];
+  if (!dateProp || dateProp.type !== "date") return null;
+  return dateProp.date?.start ?? null;
+}
+
+function getCategoryProperty(page: any, propertyName: string): string | null {
+  const categoryProp = page.properties?.[propertyName];
+  if (!categoryProp) return null;
+
+  if (categoryProp.type === "select") {
+    return categoryProp.select?.name ?? null;
+  }
+  if (categoryProp.type === "multi_select") {
+    const names = categoryProp.multi_select.map((item: any) => item.name);
+    return names.length > 0 ? names.join(", ") : null;
+  }
+  return null;
+}
+
+function getCheckboxProperty(page: any, propertyName: string): boolean {
+  const checkboxProp = page.properties?.[propertyName];
+  if (!checkboxProp || checkboxProp.type !== "checkbox") return false;
+  return checkboxProp.checkbox === true;
+}
+
+async function queryLatestWorkPagesByCompletion(
+  startDate: string,
+  endDate: string,
+  completed: boolean
+) {
   const allResults: any[] = [];
   let cursor: string | undefined;
 
@@ -24,11 +134,47 @@ export async function getWorkPages(startDate: string, endDate: string) {
           },
           {
             property: "완료",
-            checkbox: { equals: true },
+            checkbox: { equals: completed },
           },
         ],
       },
       sorts: [{ property: "완료일", direction: "ascending" }],
+      start_cursor: cursor,
+    });
+    allResults.push(...response.results);
+    cursor = response.has_more
+      ? (response.next_cursor ?? undefined)
+      : undefined;
+  } while (cursor);
+
+  return allResults;
+}
+
+// 어센텀 업무 DB에서 특정 날짜 범위의 완료된 업무 목록 조회 (페이지네이션 지원)
+export async function getWorkPages(startDate: string, endDate: string) {
+  return queryLatestWorkPagesByCompletion(startDate, endDate, true);
+}
+
+async function getLegacyWorkPages(startDate: string, endDate: string) {
+  const allResults: any[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const response = await notion.databases.query({
+      database_id: getLegacyWorkDatabaseId(),
+      filter: {
+        and: [
+          {
+            property: "일정",
+            date: { on_or_after: startDate },
+          },
+          {
+            property: "일정",
+            date: { on_or_before: endDate },
+          },
+        ],
+      },
+      sorts: [{ property: "일정", direction: "ascending" }],
       start_cursor: cursor,
     });
     allResults.push(...response.results);
@@ -78,29 +224,35 @@ export async function getAllBlocks(
   return result;
 }
 
-// 블록에서 체크된 to_do 항목만 추출
-export function extractCheckedTodos(blocks: any[]): string[] {
+export function extractTodoItems(blocks: any[]): TodoItem[] {
   return blocks
-    .filter((b) => b.type === "to_do" && b.to_do?.checked === true)
+    .filter((b) => b.type === "to_do")
     .map((b) => {
       const richTexts = b.to_do?.rich_text ?? [];
-      return richTexts.map((rt: any) => rt.plain_text).join("");
+      const text = richTexts.map((rt: any) => rt.plain_text).join("");
+      return {
+        text,
+        checked: b.to_do?.checked === true,
+      };
     })
-    .filter((text) => text.trim().length > 0);
+    .filter((item) => item.text.trim().length > 0);
+}
+
+// 블록에서 체크된 to_do 항목만 추출
+export function extractCheckedTodos(blocks: any[]): string[] {
+  return extractTodoItems(blocks)
+    .filter((item) => item.checked)
+    .map((item) => item.text);
 }
 
 // 페이지 PIC 속성에서 User ID 목록 반환
 export function getPageUsers(page: any): string[] {
-  const peopleProp = page.properties?.["PIC"];
-  if (!peopleProp || peopleProp.type !== "people") return [];
-  return peopleProp.people.map((p: any) => p.id);
+  return getPeoplePropertyIds(page, "PIC");
 }
 
 // 페이지 완료일 반환
 export function getPageDate(page: any): string | null {
-  const dateProp = page.properties?.["완료일"];
-  if (!dateProp || dateProp.type !== "date") return null;
-  return dateProp.date?.start ?? null;
+  return getDateProperty(page, "완료일");
 }
 
 // 업무 아이템의 제목(이름) 반환
@@ -122,6 +274,136 @@ export function getTaskParentId(page: any): string | null {
   const relationProp = page.properties?.["상위 항목"];
   if (!relationProp || relationProp.type !== "relation") return null;
   return relationProp.relation?.[0]?.id ?? null;
+}
+
+function getLegacyPageUsers(page: any): string[] {
+  return getPeoplePropertyIds(page, "사람");
+}
+
+function getLegacyPageDate(page: any): string | null {
+  return getDateProperty(page, "일정");
+}
+
+function getLegacyPageCategory(page: any): string | null {
+  return getCategoryProperty(page, "카테고리");
+}
+
+function toLatestWorkItem(page: any): WorkItem | null {
+  const date = getPageDate(page);
+  const title = getTaskTitle(page);
+  if (!date || !title) return null;
+
+  return {
+    id: page.id as string,
+    pageId: page.id as string,
+    source: "latest",
+    status: getCheckboxProperty(page, "완료") ? "completed" : "incomplete",
+    date,
+    users: getPageUsers(page),
+    title,
+    category: getTaskCategory(page),
+    parentId: getTaskParentId(page),
+  };
+}
+
+function toLegacyWorkItems(
+  page: any,
+  todos: TodoItem[],
+  includeIncomplete: boolean
+): WorkItem[] {
+  const date = getLegacyPageDate(page);
+  if (!date) return [];
+
+  const users = getLegacyPageUsers(page);
+  const category = getLegacyPageCategory(page);
+
+  return todos.flatMap((todo, index) => {
+    if (!includeIncomplete && !todo.checked) return [];
+
+    return [
+      {
+        id: `${page.id}:${index}`,
+        pageId: page.id as string,
+        source: "legacy" as const,
+        status: todo.checked ? "completed" : "incomplete",
+        date,
+        users,
+        title: todo.text,
+        category,
+        parentId: null,
+      },
+    ];
+  });
+}
+
+export function formatWorkItem(item: Pick<WorkItem, "title" | "category">): string {
+  return formatLine(item.title, item.category);
+}
+
+export async function getWorkItems(
+  startDate: string,
+  endDate: string,
+  options: { includeIncomplete?: boolean } = {}
+): Promise<WorkItem[]> {
+  const includeIncomplete = options.includeIncomplete ?? false;
+  const ranges = splitWorkDateRanges(startDate, endDate);
+
+  const workItems = await Promise.all(
+    ranges.map(async (range) => {
+      if (range.source === "latest") {
+        const latestPages = includeIncomplete
+          ? (
+              await Promise.all([
+                queryLatestWorkPagesByCompletion(
+                  range.startDate,
+                  range.endDate,
+                  true
+                ),
+                queryLatestWorkPagesByCompletion(
+                  range.startDate,
+                  range.endDate,
+                  false
+                ),
+              ])
+            ).flat()
+          : await queryLatestWorkPagesByCompletion(
+              range.startDate,
+              range.endDate,
+              true
+            );
+
+        return latestPages
+          .map(toLatestWorkItem)
+          .filter((item): item is WorkItem =>
+            item
+              ? includeIncomplete || item.status === "completed"
+              : false
+          );
+      }
+
+      const legacyPages = await getLegacyWorkPages(range.startDate, range.endDate);
+      const legacyItems = await mapWithConcurrencyLimit(
+        legacyPages,
+        LEGACY_BLOCK_FETCH_CONCURRENCY,
+        async (page) => {
+          const blocks = await getAllBlocks((page as any).id, 4);
+          const todos = extractTodoItems(blocks);
+          return toLegacyWorkItems(page, todos, includeIncomplete);
+        }
+      );
+
+      return legacyItems.flat();
+    })
+  );
+
+  return workItems
+    .flat()
+    .sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) ||
+        a.source.localeCompare(b.source) ||
+        a.title.localeCompare(b.title)
+    );
 }
 
 export interface TaskInfo {
