@@ -5,6 +5,7 @@ import {
   formatWorkItem,
   splitWorkDateRanges,
 } from "../lib/notion";
+import { normalizeSummarizedDaily } from "../lib/openai";
 import { getKstDateInfo, getPreviousWeekDateRange } from "../lib/time";
 
 function verifyDateRangeSplit() {
@@ -80,11 +81,54 @@ function verifyFormatting() {
   );
 }
 
+function verifySummarizedDailyNormalization() {
+  const normalized = normalizeSummarizedDaily(
+    [
+      {
+        date: "2026-04-01",
+        youngminTasks: ["Feature B09", "자동 배포 구현"],
+        seyeonTasks: ["GCS pulse 연동 디코 봇 수정"],
+        allTasks: [],
+      },
+      {
+        date: "2026-03-31",
+        youngminTasks: ["업무 DB 최적화"],
+        seyeonTasks: [],
+        allTasks: [],
+      },
+    ],
+    [
+      { date: "2026-04-01", youngmin: "Feature B09", seyeon: "" },
+      { date: "2026-04-01", youngmin: "자동 배포 구현", seyeon: "" },
+      {
+        date: "2026-04-01",
+        youngmin: "",
+        seyeon: "GCS pulse 연동 디코 봇 수정",
+      },
+      { date: "2026-04-02", youngmin: "무시해야 하는 날짜", seyeon: "" },
+    ]
+  );
+
+  assert.deepEqual(normalized, [
+    {
+      date: "2026-04-01",
+      youngmin: "Feature B09 / 자동 배포 구현",
+      seyeon: "GCS pulse 연동 디코 봇 수정",
+    },
+    {
+      date: "2026-03-31",
+      youngmin: "업무 DB 최적화",
+      seyeon: "",
+    },
+  ]);
+}
+
 function main() {
   verifyDateRangeSplit();
   verifyTodoExtraction();
   verifyKstDateBoundary();
   verifyFormatting();
+  verifySummarizedDailyNormalization();
   console.log("work query checks passed");
 }
 

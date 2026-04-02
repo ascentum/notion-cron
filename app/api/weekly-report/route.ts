@@ -205,18 +205,24 @@ function buildContentBlocks(overview: string, startShort: string, endShort: stri
 
 // 2단 column_list 블록 생성 (박영민 / 조세연)
 function buildColumnBlocks(summarizedDaily: SummarizedDay[]): any[] {
-  const youngminEntries: { date: string; text: string }[] = [];
-  const seyeonEntries: { date: string; text: string }[] = [];
+  const byDate = new Map<string, { youngmin: string[]; seyeon: string[] }>();
 
   for (const d of summarizedDaily) {
     const shortDate = toShortDate(d.date);
-    if (d.youngmin) {
-      youngminEntries.push({ date: shortDate, text: d.youngmin });
-    }
-    if (d.seyeon) {
-      seyeonEntries.push({ date: shortDate, text: d.seyeon });
-    }
+    const entry = byDate.get(shortDate) ?? { youngmin: [], seyeon: [] };
+
+    if (d.youngmin) entry.youngmin.push(d.youngmin);
+    if (d.seyeon) entry.seyeon.push(d.seyeon);
+
+    byDate.set(shortDate, entry);
   }
+
+  const youngminEntries = [...byDate.entries()]
+    .filter(([, entry]) => entry.youngmin.length > 0)
+    .map(([date, entry]) => ({ date, text: entry.youngmin.join(" / ") }));
+  const seyeonEntries = [...byDate.entries()]
+    .filter(([, entry]) => entry.seyeon.length > 0)
+    .map(([date, entry]) => ({ date, text: entry.seyeon.join(" / ") }));
 
   const toBullets = (entries: { date: string; text: string }[]) =>
     entries.map((e) => ({

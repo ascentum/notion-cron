@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "test:task-hierarchy": "./node_modules/.bin/tsc --outDir /tmp/notion-cron-task-tests --module commonjs --moduleResolution node --target es2020 --lib es2020,dom --esModuleInterop true scripts/test-task-hierarchy.ts lib/notion.ts && NODE_PATH=./node_modules node /tmp/notion-cron-task-tests/scripts/test-task-hierarchy.js",
-    "test:work-queries": "./node_modules/.bin/tsc --outDir /tmp/notion-cron-work-tests --module commonjs --moduleResolution node --target es2020 --lib es2020,dom --esModuleInterop true scripts/test-work-queries.ts lib/notion.ts lib/time.ts && NODE_PATH=./node_modules node /tmp/notion-cron-work-tests/scripts/test-work-queries.js"
+    "test:work-queries": "./node_modules/.bin/tsc --outDir /tmp/notion-cron-work-tests --module commonjs --moduleResolution node --target es2020 --lib es2020,dom --esModuleInterop true scripts/test-work-queries.ts lib/notion.ts lib/time.ts lib/openai.ts && NODE_PATH=./node_modules node /tmp/notion-cron-work-tests/scripts/test-work-queries.js"
   },
   "dependencies": {
     "@notionhq/client": "^2.3.0",

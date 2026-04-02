@@ -17,6 +17,78 @@ export interface SummarizedDay {
   seyeon: string;
 }
 
+function splitSummaryText(text: string): string[] {
+  return text
+    .split(/\s+\/\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+function dedupePreserveOrder(parts: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const part of parts) {
+    if (seen.has(part)) continue;
+    seen.add(part);
+    result.push(part);
+  }
+
+  return result;
+}
+
+function joinSummaryParts(parts: string[]): string {
+  return dedupePreserveOrder(parts).join(" / ");
+}
+
+export function normalizeSummarizedDaily(
+  dailySummaries: DailySummary[],
+  summarizedDaily: SummarizedDay[]
+): SummarizedDay[] {
+  const allowedDates = new Set(dailySummaries.map((summary) => summary.date));
+  const mergedByDate = new Map<
+    string,
+    { youngmin: string[]; seyeon: string[] }
+  >();
+
+  for (const summary of summarizedDaily) {
+    if (!allowedDates.has(summary.date)) continue;
+
+    const entry = mergedByDate.get(summary.date) ?? {
+      youngmin: [],
+      seyeon: [],
+    };
+
+    entry.youngmin.push(...splitSummaryText(summary.youngmin));
+    entry.seyeon.push(...splitSummaryText(summary.seyeon));
+    mergedByDate.set(summary.date, entry);
+  }
+
+  return dailySummaries.flatMap((summary) => {
+    const merged = mergedByDate.get(summary.date);
+    const youngmin = merged?.youngmin.length
+      ? joinSummaryParts(merged.youngmin)
+      : summary.youngminTasks.length > 0
+        ? summary.youngminTasks.join(" / ")
+        : "";
+    const seyeon = merged?.seyeon.length
+      ? joinSummaryParts(merged.seyeon)
+      : summary.seyeonTasks.length > 0
+        ? summary.seyeonTasks.join(" / ")
+        : "";
+
+    if (!youngmin && !seyeon) return [];
+
+    return [
+      {
+        date: summary.date,
+        youngmin,
+        seyeon,
+      },
+    ];
+  });
+}
+
 export async function generateWeeklySummary(
   dailySummaries: DailySummary[],
   range: { startDate: string; endDate: string }
@@ -84,21 +156,21 @@ ${dailyData}
 
   const overview = overviewRes.choices[0].message.content ?? "";
 
-  let summarizedDaily: SummarizedDay[] = [];
+  let summarizedDailyInput: SummarizedDay[] = [];
   try {
     const dailyContent = dailyRes.choices[0].message.content ?? "[]";
     const jsonMatch = dailyContent.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
-      summarizedDaily = JSON.parse(jsonMatch[0]);
+      summarizedDailyInput = JSON.parse(jsonMatch[0]);
     }
   } catch {
-    // Fallback: 파싱 실패 시 원본 task 사용
-    summarizedDaily = dailySummaries.map((d) => ({
-      date: d.date,
-      youngmin: d.youngminTasks.join(" / "),
-      seyeon: d.seyeonTasks.join(" / "),
-    }));
+    summarizedDailyInput = [];
   }
+
+  const summarizedDaily = normalizeSummarizedDaily(
+    dailySummaries,
+    summarizedDailyInput
+  );
 
   return { overview, summarizedDaily };
 }
