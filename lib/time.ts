@@ -30,3 +30,13 @@ export function getKstDateInfo(now: Date = new Date()) {
     weekday,
   };
 }
+
+export function getDailySnippetDateInfo(now: Date = new Date()) {
+  const { isoDate: triggerIsoDate, weekday } = getKstDateInfo(now);
+
+  return {
+    triggerIsoDate,
+    targetIsoDate: shiftIsoDate(triggerIsoDate, -1),
+    weekday,
+  };
+}

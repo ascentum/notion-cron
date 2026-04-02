@@ -22,7 +22,7 @@ import {
   triggerDailyFeedback,
   triggerWeeklyFeedback,
 } from "@/lib/gcs";
-import { getKstDateInfo, getPreviousWeekDateRange } from "@/lib/time";
+import { getDailySnippetDateInfo, getPreviousWeekDateRange } from "@/lib/time";
 
 export const maxDuration = 60;
 
@@ -72,13 +72,15 @@ async function handleSendSnippets(
   now: Date,
   targetPerson: "youngmin" | "seyeon" | null
 ) {
-  const { isoDate: todayIso, weekday } = getKstDateInfo(now);
+  const { triggerIsoDate, targetIsoDate, weekday } = getDailySnippetDateInfo(now);
   const isMonday = weekday === 1;
-  const shortDate = toShortDate(todayIso);
+  const shortDate = toShortDate(targetIsoDate);
 
-  // 오늘 이미 전송된 스니펫이 있는지 확인 (중복 방지)
+  // 자정 실행 시 전날 스니펫이 이미 전송됐는지 확인 (중복 방지)
   const alreadySent = await getAlreadySentPersons(shortDate, "데일리");
-  console.log(`[daily-snippet] already sent today: ${[...alreadySent].join(", ") || "none"}`);
+  console.log(
+    `[daily-snippet] already sent for ${targetIsoDate}: ${[...alreadySent].join(", ") || "none"}`
+  );
 
   // 대상 사람 결정
   const targets: ("youngmin" | "seyeon")[] = targetPerson
@@ -94,15 +96,16 @@ async function handleSendSnippets(
     console.log("[daily-snippet] all targets already have snippets, skipping");
     return NextResponse.json({
       success: true,
-      date: todayIso,
+      date: targetIsoDate,
+      triggerDate: triggerIsoDate,
       skipped: true,
-      reason: "all targets already have snippets for today",
+      reason: `all targets already have snippets for ${targetIsoDate}`,
     });
   }
 
-  // 오늘 완료된 업무 조회 (어센텀 업무 DB에서 완료일=오늘 & 완료=true)
-  const workPages = await getWorkPages(todayIso, todayIso);
-  console.log(`[daily-snippet] ${workPages.length} tasks for ${todayIso}`);
+  // 자정 실행 시 전날 완료된 업무를 조회
+  const workPages = await getWorkPages(targetIsoDate, targetIsoDate);
+  console.log(`[daily-snippet] ${workPages.length} tasks for ${targetIsoDate}`);
 
   // 계층 구조 + 카테고리 포맷으로 사람별 업무 목록 생성
   const tasksByPerson = await buildFormattedTasks(workPages, USER_IDS);
@@ -116,7 +119,7 @@ async function handleSendSnippets(
     if (tasks.length > 0) {
       const nameKo = person === "youngmin" ? "박영민" : "조세연";
       jobs.push(
-        generateDailySnippetContent(nameKo, todayIso, tasks).then((content) =>
+        generateDailySnippetContent(nameKo, targetIsoDate, tasks).then((content) =>
           sendSnippetMessage(content, person, "daily", shortDate)
         )
       );
@@ -128,12 +131,13 @@ async function handleSendSnippets(
 
   // 월요일: 주간 스니펫 추가 전송
   if (isMonday) {
-    await handleWeeklySnippets(todayIso);
+    await handleWeeklySnippets(triggerIsoDate);
   }
 
   return NextResponse.json({
     success: true,
-    date: todayIso,
+    date: targetIsoDate,
+    triggerDate: triggerIsoDate,
     isMonday,
     targets: filteredTargets,
     youngminTasks: youngminTasks.length,

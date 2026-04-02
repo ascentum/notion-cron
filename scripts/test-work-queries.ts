@@ -6,7 +6,11 @@ import {
   splitWorkDateRanges,
 } from "../lib/notion";
 import { normalizeSummarizedDaily } from "../lib/openai";
-import { getKstDateInfo, getPreviousWeekDateRange } from "../lib/time";
+import {
+  getDailySnippetDateInfo,
+  getKstDateInfo,
+  getPreviousWeekDateRange,
+} from "../lib/time";
 
 function verifyDateRangeSplit() {
   assert.deepEqual(
@@ -70,6 +74,18 @@ function verifyKstDateBoundary() {
   });
 }
 
+function verifyDailySnippetDateBoundary() {
+  const dateInfo = getDailySnippetDateInfo(
+    new Date("2026-04-02T15:00:16.000Z")
+  );
+
+  assert.deepEqual(dateInfo, {
+    triggerIsoDate: "2026-04-03",
+    targetIsoDate: "2026-04-02",
+    weekday: 5,
+  });
+}
+
 function verifyFormatting() {
   assert.equal(
     formatWorkItem({ title: "주간 회고 진행", category: "Ascentum" }),
@@ -127,6 +143,7 @@ function main() {
   verifyDateRangeSplit();
   verifyTodoExtraction();
   verifyKstDateBoundary();
+  verifyDailySnippetDateBoundary();
   verifyFormatting();
   verifySummarizedDailyNormalization();
   console.log("work query checks passed");
