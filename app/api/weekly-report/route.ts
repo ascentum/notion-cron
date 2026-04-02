@@ -13,7 +13,7 @@ import {
   deleteBlock,
 } from "@/lib/notion";
 import { generateWeeklySummary, SummarizedDay } from "@/lib/openai";
-import { getKstDateInfo, shiftIsoDate } from "@/lib/time";
+import { getKstDateInfo, getPreviousWeekDateRange } from "@/lib/time";
 
 // Vercel Hobby: 최대 60초
 export const maxDuration = 60;
@@ -26,16 +26,16 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // 1. 날짜 범위 계산 (KST 기준 7일 전 ~ 오늘)
+    // 1. 날짜 범위 계산 (KST 기준, 오늘 제외 직전 7일)
     const { isoDate: todayIso } = getKstDateInfo();
-    const startIso = shiftIsoDate(todayIso, -7);
+    const { startIso, endIso } = getPreviousWeekDateRange(todayIso);
 
     const YOUNGMIN_ID = process.env.NOTION_USER_YOUNGMIN!;
     const SEYEON_ID = process.env.NOTION_USER_SEYEON!;
 
     // 2. 레거시 + 최신 업무 DB에서 해당 기간의 완료된 업무 가져오기
-    const workItems = await getWorkItems(startIso, todayIso);
-    console.log(`Found ${workItems.length} completed tasks from ${startIso} to ${todayIso}`);
+    const workItems = await getWorkItems(startIso, endIso);
+    console.log(`Found ${workItems.length} completed tasks from ${startIso} to ${endIso}`);
 
     // 3. 날짜별 그룹핑 → 사람별 업무 목록 구성
     const byDate = new Map<
@@ -74,11 +74,14 @@ export async function GET(req: NextRequest) {
     }
 
     // 4. OpenAI로 총평 + 데일리 요약 생성
-    const { overview, summarizedDaily } = await generateWeeklySummary(dailySummaries);
+    const { overview, summarizedDaily } = await generateWeeklySummary(dailySummaries, {
+      startDate: startIso,
+      endDate: endIso,
+    });
 
     // 5. 날짜 범위 (short format)
     const startShort = toShortDate(startIso);
-    const endShort = toShortDate(todayIso);
+    const endShort = toShortDate(endIso);
 
     // 6. 기존 페이지 찾기 또는 템플릿으로 새로 생성
     let pageId: string;

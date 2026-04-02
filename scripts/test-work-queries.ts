@@ -5,7 +5,7 @@ import {
   formatWorkItem,
   splitWorkDateRanges,
 } from "../lib/notion";
-import { getKstDateInfo } from "../lib/time";
+import { getKstDateInfo, getPreviousWeekDateRange } from "../lib/time";
 
 function verifyDateRangeSplit() {
   assert.deepEqual(
@@ -62,6 +62,11 @@ function verifyKstDateBoundary() {
   const dateInfo = getKstDateInfo(new Date("2026-04-01T15:00:00.000Z"));
   assert.equal(dateInfo.isoDate, "2026-04-02");
   assert.equal(dateInfo.weekday, 4);
+
+  assert.deepEqual(getPreviousWeekDateRange(dateInfo.isoDate), {
+    startIso: "2026-03-26",
+    endIso: "2026-04-01",
+  });
 }
 
 function verifyFormatting() {

@@ -340,6 +340,26 @@ export function formatWorkItem(item: Pick<WorkItem, "title" | "category">): stri
   return formatLine(item.title, item.category);
 }
 
+export async function getLegacyWorkItemsForDateRange(
+  startDate: string,
+  endDate: string,
+  options: { includeIncomplete?: boolean } = {}
+): Promise<WorkItem[]> {
+  const includeIncomplete = options.includeIncomplete ?? false;
+  const legacyPages = await getLegacyWorkPages(startDate, endDate);
+  const legacyItems = await mapWithConcurrencyLimit(
+    legacyPages,
+    LEGACY_BLOCK_FETCH_CONCURRENCY,
+    async (page) => {
+      const blocks = await getAllBlocks((page as any).id, 4);
+      const todos = extractTodoItems(blocks);
+      return toLegacyWorkItems(page, todos, includeIncomplete);
+    }
+  );
+
+  return legacyItems.flat();
+}
+
 export async function getWorkItems(
   startDate: string,
   endDate: string,
@@ -381,18 +401,9 @@ export async function getWorkItems(
           );
       }
 
-      const legacyPages = await getLegacyWorkPages(range.startDate, range.endDate);
-      const legacyItems = await mapWithConcurrencyLimit(
-        legacyPages,
-        LEGACY_BLOCK_FETCH_CONCURRENCY,
-        async (page) => {
-          const blocks = await getAllBlocks((page as any).id, 4);
-          const todos = extractTodoItems(blocks);
-          return toLegacyWorkItems(page, todos, includeIncomplete);
-        }
-      );
-
-      return legacyItems.flat();
+      return getLegacyWorkItemsForDateRange(range.startDate, range.endDate, {
+        includeIncomplete,
+      });
     })
   );
 

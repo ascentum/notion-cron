@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   formatWorkItem,
-  getWorkItems,
+  getLegacyWorkItemsForDateRange,
+  getPageDate,
   getWorkPages,
+  splitWorkDateRanges,
   buildFormattedTasks,
 } from "@/lib/notion";
 import {
@@ -20,7 +22,7 @@ import {
   triggerDailyFeedback,
   triggerWeeklyFeedback,
 } from "@/lib/gcs";
-import { getKstDateInfo, shiftIsoDate } from "@/lib/time";
+import { getKstDateInfo, getPreviousWeekDateRange } from "@/lib/time";
 
 export const maxDuration = 60;
 
@@ -126,7 +128,7 @@ async function handleSendSnippets(
 
   // 월요일: 주간 스니펫 추가 전송
   if (isMonday) {
-    await handleWeeklySnippets(todayIso, shortDate);
+    await handleWeeklySnippets(todayIso);
   }
 
   return NextResponse.json({
@@ -139,19 +141,52 @@ async function handleSendSnippets(
   });
 }
 
-async function handleWeeklySnippets(todayIso: string, todayShort: string) {
-  const startIso = shiftIsoDate(todayIso, -7);
-  const weeklyItems = await getWorkItems(startIso, todayIso);
+async function handleWeeklySnippets(todayIso: string) {
+  const { startIso, endIso } = getPreviousWeekDateRange(todayIso);
+  const ranges = splitWorkDateRanges(startIso, endIso);
 
   const byDate = new Map<string, { youngmin: string[]; seyeon: string[] }>();
-  for (const item of weeklyItems) {
-    const entry = byDate.get(item.date) ?? { youngmin: [], seyeon: [] };
-    const formatted = formatWorkItem(item);
 
-    if (item.users.includes(YOUNGMIN_ID)) entry.youngmin.push(formatted);
-    if (item.users.includes(SEYEON_ID)) entry.seyeon.push(formatted);
+  for (const range of ranges) {
+    if (range.source === "latest") {
+      const latestPages = await getWorkPages(range.startDate, range.endDate);
+      const pagesByDate = new Map<string, any[]>();
 
-    byDate.set(item.date, entry);
+      for (const page of latestPages) {
+        const date = getPageDate(page) ?? range.endDate;
+        const entries = pagesByDate.get(date) ?? [];
+        entries.push(page);
+        pagesByDate.set(date, entries);
+      }
+
+      for (const [date, datePages] of [...pagesByDate.entries()].sort(([a], [b]) =>
+        a.localeCompare(b)
+      )) {
+        const tasksByPerson = await buildFormattedTasks(datePages, USER_IDS);
+        const entry = byDate.get(date) ?? { youngmin: [], seyeon: [] };
+
+        entry.youngmin.push(...(tasksByPerson.youngmin ?? []));
+        entry.seyeon.push(...(tasksByPerson.seyeon ?? []));
+        byDate.set(date, entry);
+      }
+
+      continue;
+    }
+
+    const legacyItems = await getLegacyWorkItemsForDateRange(
+      range.startDate,
+      range.endDate
+    );
+
+    for (const item of legacyItems) {
+      const entry = byDate.get(item.date) ?? { youngmin: [], seyeon: [] };
+      const formatted = formatWorkItem(item);
+
+      if (item.users.includes(YOUNGMIN_ID)) entry.youngmin.push(formatted);
+      if (item.users.includes(SEYEON_ID)) entry.seyeon.push(formatted);
+
+      byDate.set(item.date, entry);
+    }
   }
 
   const sortedByDate = [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b));
@@ -163,12 +198,13 @@ async function handleWeeklySnippets(todayIso: string, todayShort: string) {
     .filter(([, value]) => value.seyeon.length > 0)
     .map(([date, value]) => ({ date, tasks: value.seyeon }));
 
-  const weekLabel = `${toShortDate(startIso)}~${todayShort}`;
+  const endShort = toShortDate(endIso);
+  const weekLabel = `${toShortDate(startIso)}~${toShortDate(endIso)}`;
   const weeklyJobs: Promise<void>[] = [];
 
   if (ymWeekly.length > 0) {
     weeklyJobs.push(
-      generateWeeklySnippetContent("박영민", toShortDate(startIso), todayShort, ymWeekly).then(
+      generateWeeklySnippetContent("박영민", toShortDate(startIso), endShort, ymWeekly).then(
         (content) => sendSnippetMessage(content, "youngmin", "weekly", weekLabel)
       )
     );
@@ -177,7 +213,7 @@ async function handleWeeklySnippets(todayIso: string, todayShort: string) {
   }
   if (syWeekly.length > 0) {
     weeklyJobs.push(
-      generateWeeklySnippetContent("조세연", toShortDate(startIso), todayShort, syWeekly).then(
+      generateWeeklySnippetContent("조세연", toShortDate(startIso), endShort, syWeekly).then(
         (content) => sendSnippetMessage(content, "seyeon", "weekly", weekLabel)
       )
     );

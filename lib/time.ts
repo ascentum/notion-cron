@@ -10,6 +10,16 @@ export function shiftIsoDate(isoDate: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+export function getPreviousWeekDateRange(anchorIsoDate: string) {
+  const endIso = shiftIsoDate(anchorIsoDate, -1);
+  const startIso = shiftIsoDate(endIso, -6);
+
+  return {
+    startIso,
+    endIso,
+  };
+}
+
 export function getKstDateInfo(now: Date = new Date()) {
   const kstDate = getKstDate(now);
   const isoDate = kstDate.toISOString().slice(0, 10);
