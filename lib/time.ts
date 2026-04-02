@@ -40,3 +40,23 @@ export function getDailySnippetDateInfo(now: Date = new Date()) {
     weekday,
   };
 }
+
+export function toKstIsoDate(dateValue: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+    return dateValue;
+  }
+
+  const parsed = new Date(dateValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return dateValue.slice(0, 10);
+  }
+
+  return getKstDate(parsed).toISOString().slice(0, 10);
+}
+
+export function getKstDateTimeRange(startIsoDate: string, endIsoDate: string) {
+  return {
+    start: `${startIsoDate}T00:00:00.000+09:00`,
+    end: `${endIsoDate}T23:59:59.999+09:00`,
+  };
+}

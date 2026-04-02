@@ -1,4 +1,5 @@
 import { Client } from "@notionhq/client";
+import { getKstDateTimeRange, toKstIsoDate } from "./time";
 
 export const notion = new Client({
   auth: process.env.NOTION_API_KEY,
@@ -88,7 +89,8 @@ function getPeoplePropertyIds(page: any, propertyName: string): string[] {
 function getDateProperty(page: any, propertyName: string): string | null {
   const dateProp = page.properties?.[propertyName];
   if (!dateProp || dateProp.type !== "date") return null;
-  return dateProp.date?.start ?? null;
+  const start = dateProp.date?.start ?? null;
+  return start ? toKstIsoDate(start) : null;
 }
 
 function getCategoryProperty(page: any, propertyName: string): string | null {
@@ -118,6 +120,7 @@ async function queryLatestWorkPagesByCompletion(
 ) {
   const allResults: any[] = [];
   let cursor: string | undefined;
+  const range = getKstDateTimeRange(startDate, endDate);
 
   do {
     const response = await notion.databases.query({
@@ -126,11 +129,11 @@ async function queryLatestWorkPagesByCompletion(
         and: [
           {
             property: "완료일",
-            date: { on_or_after: startDate },
+            date: { on_or_after: range.start },
           },
           {
             property: "완료일",
-            date: { on_or_before: endDate },
+            date: { on_or_before: range.end },
           },
           {
             property: "완료",

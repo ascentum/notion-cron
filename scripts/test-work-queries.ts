@@ -8,8 +8,10 @@ import {
 import { normalizeSummarizedDaily } from "../lib/openai";
 import {
   getDailySnippetDateInfo,
+  getKstDateTimeRange,
   getKstDateInfo,
   getPreviousWeekDateRange,
+  toKstIsoDate,
 } from "../lib/time";
 
 function verifyDateRangeSplit() {
@@ -86,6 +88,25 @@ function verifyDailySnippetDateBoundary() {
   });
 }
 
+function verifyKstDateNormalization() {
+  assert.equal(toKstIsoDate("2026-04-02"), "2026-04-02");
+  assert.equal(
+    toKstIsoDate("2026-04-02T13:51:00.000+09:00"),
+    "2026-04-02"
+  );
+  assert.equal(
+    toKstIsoDate("2026-04-03T00:04:00.000+09:00"),
+    "2026-04-03"
+  );
+}
+
+function verifyKstDateTimeRange() {
+  assert.deepEqual(getKstDateTimeRange("2026-04-02", "2026-04-02"), {
+    start: "2026-04-02T00:00:00.000+09:00",
+    end: "2026-04-02T23:59:59.999+09:00",
+  });
+}
+
 function verifyFormatting() {
   assert.equal(
     formatWorkItem({ title: "주간 회고 진행", category: "Ascentum" }),
@@ -144,6 +165,8 @@ function main() {
   verifyTodoExtraction();
   verifyKstDateBoundary();
   verifyDailySnippetDateBoundary();
+  verifyKstDateNormalization();
+  verifyKstDateTimeRange();
   verifyFormatting();
   verifySummarizedDailyNormalization();
   console.log("work query checks passed");
