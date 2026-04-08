@@ -18,6 +18,7 @@ async function verifyHierarchyFormatting() {
       category: "Planning",
       parentId: null,
       users: [USER_IDS.youngmin],
+      isCompleted: true,
       isInScope: true,
       sourceIndex: 0,
     },
@@ -27,6 +28,7 @@ async function verifyHierarchyFormatting() {
       category: "Execution",
       parentId: "root",
       users: [USER_IDS.youngmin],
+      isCompleted: true,
       isInScope: true,
       sourceIndex: 1,
     },
@@ -36,6 +38,7 @@ async function verifyHierarchyFormatting() {
       category: "QA",
       parentId: "child",
       users: [USER_IDS.youngmin],
+      isCompleted: true,
       isInScope: true,
       sourceIndex: 2,
     },
@@ -45,6 +48,7 @@ async function verifyHierarchyFormatting() {
       category: "Docs",
       parentId: null,
       users: [],
+      isCompleted: true,
       isInScope: false,
       sourceIndex: Number.POSITIVE_INFINITY,
     },
@@ -54,6 +58,7 @@ async function verifyHierarchyFormatting() {
       category: "Release",
       parentId: "context-parent",
       users: [],
+      isCompleted: true,
       isInScope: false,
       sourceIndex: Number.POSITIVE_INFINITY,
     },
@@ -63,6 +68,7 @@ async function verifyHierarchyFormatting() {
       category: "Ops",
       parentId: "context-child",
       users: [USER_IDS.seyeon],
+      isCompleted: true,
       isInScope: true,
       sourceIndex: 3,
     },
@@ -84,6 +90,128 @@ async function verifyHierarchyFormatting() {
     formatted.youngmin.filter((line) => line.includes("Child Task")).length,
     1
   );
+}
+
+async function verifyCompletedExpansionRules() {
+  const tasks: TaskInfo[] = [
+    {
+      id: "root-seed",
+      title: "Root Seed",
+      category: "Planning",
+      parentId: null,
+      users: [USER_IDS.youngmin],
+      isCompleted: true,
+      isInScope: true,
+      sourceIndex: 0,
+    },
+    {
+      id: "hidden-bridge",
+      title: "Hidden Bridge",
+      category: "Internal",
+      parentId: "root-seed",
+      users: [],
+      isCompleted: false,
+      isInScope: false,
+      sourceIndex: Number.POSITIVE_INFINITY,
+    },
+    {
+      id: "connected-descendant",
+      title: "Connected Descendant",
+      category: "QA",
+      parentId: "hidden-bridge",
+      users: [USER_IDS.seyeon],
+      isCompleted: true,
+      isInScope: false,
+      sourceIndex: Number.POSITIVE_INFINITY,
+    },
+    {
+      id: "shared-parent",
+      title: "Shared Parent",
+      category: "Docs",
+      parentId: null,
+      users: [],
+      isCompleted: true,
+      isInScope: false,
+      sourceIndex: Number.POSITIVE_INFINITY,
+    },
+    {
+      id: "youngmin-seed",
+      title: "Youngmin Seed",
+      category: "Execution",
+      parentId: "shared-parent",
+      users: [USER_IDS.youngmin],
+      isCompleted: true,
+      isInScope: true,
+      sourceIndex: 1,
+    },
+    {
+      id: "seyeon-sibling-seed",
+      title: "Seyeon Sibling Seed",
+      category: "Ops",
+      parentId: "shared-parent",
+      users: [USER_IDS.seyeon],
+      isCompleted: true,
+      isInScope: true,
+      sourceIndex: 2,
+    },
+  ];
+
+  const formatted = formatTaskTreeByUser(tasks, USER_IDS);
+
+  assert.deepEqual(formatted.youngmin, [
+    "[Planning] Root Seed",
+    "  - [QA] Connected Descendant",
+    "[Docs] Shared Parent",
+    "  - [Execution] Youngmin Seed",
+  ]);
+  assert.deepEqual(formatted.seyeon, [
+    "[Docs] Shared Parent",
+    "  - [Ops] Seyeon Sibling Seed",
+  ]);
+  assert.equal(
+    formatted.youngmin.some((line) => line.includes("Hidden Bridge")),
+    false
+  );
+  assert.equal(
+    formatted.youngmin.some((line) => line.includes("Seyeon Sibling Seed")),
+    false
+  );
+  assert.equal(
+    formatted.seyeon.some((line) => line.includes("Youngmin Seed")),
+    false
+  );
+}
+
+async function verifyCycleSafety() {
+  const tasks: TaskInfo[] = [
+    {
+      id: "cycle-a",
+      title: "Cycle A",
+      category: "Ops",
+      parentId: "cycle-b",
+      users: [USER_IDS.youngmin],
+      isCompleted: true,
+      isInScope: true,
+      sourceIndex: 0,
+    },
+    {
+      id: "cycle-b",
+      title: "Cycle B",
+      category: "Ops",
+      parentId: "cycle-a",
+      users: [],
+      isCompleted: true,
+      isInScope: false,
+      sourceIndex: Number.POSITIVE_INFINITY,
+    },
+  ];
+
+  const formatted = formatTaskTreeByUser(tasks, USER_IDS);
+
+  assert.deepEqual(formatted.youngmin, [
+    "[Ops] Cycle A",
+    "  - [Ops] Cycle B",
+  ]);
 }
 
 async function verifyConcurrencyLimit() {
@@ -108,6 +236,8 @@ async function verifyConcurrencyLimit() {
 
 async function main() {
   await verifyHierarchyFormatting();
+  await verifyCompletedExpansionRules();
+  await verifyCycleSafety();
   await verifyConcurrencyLimit();
   console.log("task hierarchy checks passed");
 }
