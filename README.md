@@ -1,147 +1,133 @@
 # notion-cron
 
-Notion + Discord + GCS Pulse 연동 자동화 서버 (Vercel Cron 기반)
+Notion + Discord + GCS Pulse 자동화 서버. 현재는 `Railway 단일 서비스` 기준으로 운영한다.
 
----
+`node:sqlite`를 사용하므로 런타임은 `Node 24+`가 필요하다.
 
 ## 자동화 흐름
 
-### 1. 데일리/주간 스니펫 (`/api/daily-snippet`)
+### 1. 데일리/주간 스니펫
 
-매일 **00:00 KST (자정)** Vercel Cron이 트리거.
+- Railway always-on 서비스가 KST 날짜를 기준으로 매일 데일리 스니펫 생성 여부를 판단한다.
+- 완료된 업무를 Notion에서 읽고 사람별로 정리한 뒤 GPT로 스니펫을 생성한다.
+- Discord 채널에 버튼 메시지를 보내고, 각 메시지는 SQLite에 `pending` 상태로 저장된다.
+- 30분 내 응답이 없으면 scheduler가 `due_at`이 지난 `pending` 레코드를 찾아 자동 게시한다.
+- 월요일에는 주간 스니펫도 함께 생성한다.
 
-```
-어센텀 업무 DB (완료일=오늘 & 완료=체크된 업무)
-    ↓
-사람별 업무 그룹핑 (PIC 속성 기준, 카테고리 태그 + 계층 구조 포함)
-    ↓
-GPT-4o → 데일리 스니펫 생성 (박영민 / 조세연)
-    ↓
-Discord 채널에 검토 요청 (버튼 포함)
-    ↓
-[그대로 게시 / 헬스체크 입력 / 수정하기] 중 선택
-    ↓
-GCS Pulse 게시 → AI 채점 자동 트리거
-```
+### 2. Discord 상호작용
 
-**00:30 KST** 두 번째 Cron 실행 (외부 cron-job 서비스) — 30분 이내 무응답 메시지는 자동 게시 후 AI 채점.
+- `POST /discord-interact`가 Discord 버튼과 모달을 처리한다.
+- 지원 동작:
+- 그대로 게시 ✅
+- 헬스체크 입력 🔢
+- 수정하기 ✏️
+- 건너뛰기 ⏭️
+- 게시 완료 후 GCS Pulse AI 채점(`/daily-snippets/feedback`, `/weekly-snippets/feedback`)을 비동기로 트리거한다.
 
-**월요일**에는 지난 7일 데이터를 모아 주간 스니펫도 함께 생성.
-주간 집계는 날짜 구간이 `2026-04-01`을 가로지를 경우 레거시 `업무 캘린더 DB`와 최신 `어센텀 업무 DB`를 함께 조회.
+### 3. 주간 미팅 리포트
 
----
-
-### 2. Discord 상호작용 (`/api/discord-interact`)
-
-Discord 버튼 클릭 시 처리:
-
-| 버튼 | 동작 |
-|------|------|
-| 그대로 게시 ✅ | 헬스체크 5점 기본값으로 즉시 게시 |
-| 헬스체크 입력 🔢 | 점수 입력 모달 → 게시 |
-| 수정하기 ✏️ | 내용 + 점수 수정 모달 → 게시 |
-
-게시 완료 후 GCS Pulse AI 채점(`/daily-snippets/feedback`, `/weekly-snippets/feedback`) 자동 호출.
-
----
-
-### 3. 주간 미팅 리포트 (`/api/weekly-report`)
-
-매주 **목요일 00:00 KST** Vercel Cron이 트리거.
-
-```
-업무 캘린더 DB (2026-03-31까지, 체크된 to_do만 완료로 집계) +
-어센텀 업무 DB (2026-04-01부터, 완료일 + 완료 체크 기준)
-    ↓
-GPT-4o → 핵심 흐름 3축 총평 생성
-    ↓
-Notion 미팅 기록 DB에 신규 페이지 생성
-```
-
----
+- Railway scheduler가 매주 목요일 KST 기준으로 주간 리포트를 생성한다.
+- 레거시 업무 DB와 최신 업무 DB를 같이 조회해 Notion 미팅 기록 페이지를 채운다.
 
 ## 환경변수
 
-`.env.local` 파일에 아래 값을 모두 입력:
+`.env.local` 또는 Railway Variables에 아래 값을 입력한다.
 
 ```env
-# Vercel Cron 인증
-CRON_SECRET=
+PORT=3000
+SQLITE_DB_PATH=./data/automation.sqlite
+INTERNAL_ADMIN_TOKEN=
+ENABLE_SCHEDULER=false
+AUTO_POST_DELAY_MINUTES=30
+SCHEDULER_TICK_SECONDS=60
+APP_BASE_URL=
 
-# Notion
 NOTION_API_KEY=
-NOTION_WORK_DB_ID=          # 최신 어센텀 업무 DB
-NOTION_LEGACY_WORK_DB_ID=   # 레거시 업무 캘린더 DB
+OPENAI_API_KEY=
+NOTION_WORK_DB_ID=
+NOTION_LEGACY_WORK_DB_ID=
 NOTION_WORK_DB_CUTOFF_DATE=2026-04-01
 NOTION_MEETING_DB_ID=
+NOTION_MEETING_DATA_SOURCE_ID=
 NOTION_TEMPLATE_ID=
 NOTION_USER_YOUNGMIN=
 NOTION_USER_SEYEON=
 
-# OpenAI (스니펫/리포트 생성)
-OPENAI_API_KEY=
-
-# Discord
 DISCORD_BOT_TOKEN=
-DISCORD_CHANNEL_ID=
+DISCORD_APP_ID=
 DISCORD_APP_PUBLIC_KEY=
+DISCORD_CHANNEL_ID=
 
-# GCS Pulse API
 GCS_API_TOKEN_YOUNGMIN=
 GCS_API_TOKEN_SEYEON=
 ```
 
----
+`ENABLE_SCHEDULER`는 로컬 개발 시 기본적으로 `false`로 두고, Railway 프로덕션에서는 `true`로 설정하는 것을 권장한다.
 
-## Discord 설정
-
-1. [Discord Developer Portal](https://discord.com/developers/applications)에서 Bot 생성
-2. Bot Token → `DISCORD_BOT_TOKEN`
-3. General Information → Public Key → `DISCORD_APP_PUBLIC_KEY`
-4. Interactions Endpoint URL → `https://<your-domain>/api/discord-interact`
-
----
-
-## Vercel 배포
+## 실행
 
 ```bash
-# 1. 의존성 설치
 npm ci
-
-# 2. 환경변수 설정 (.env.local)
 cp .env.example .env.local
-# 에디터에서 값 입력
-
-# 3. 로컬 테스트
 npm run dev
-curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/daily-snippet
-
-# 4. Vercel 배포
-# GitHub 레포 연결 후 환경변수 입력 → Deploy
 ```
 
-Vercel Cron 스케줄 (`vercel.json` 참고):
+프로덕션 빌드:
 
-| 경로 | 스케줄 (UTC) | KST |
-|------|-------------|-----|
-| `/api/daily-snippet` | `0 15 * * *` | 매일 00:00 (자정) |
-| `/api/daily-snippet?action=timeout` | `30 15 * * *` | 매일 00:30 (외부 cron-job) |
-| `/api/weekly-report` | `0 15 * * 3` | 매주 목요일 00:00 |
+```bash
+npm run build
+npm start
+```
 
----
+Discord slash command 등록:
+
+```bash
+npm run register:commands
+```
+
+## 내부 엔드포인트
+
+모든 `/internal/*` 엔드포인트는 `Authorization: Bearer $INTERNAL_ADMIN_TOKEN` 헤더가 필요하다.
+
+- `POST /internal/snippets/send-daily`
+- `POST /internal/snippets/sweep-timeouts`
+- `POST /internal/reports/run-weekly`
+- `POST /internal/snippets/retry/:id`
+- `GET /healthz`
+
+예시:
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $INTERNAL_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"person":"youngmin","force":true}' \
+  http://localhost:3000/internal/snippets/send-daily
+```
+
+## 테스트
+
+```bash
+npm run test:task-hierarchy
+npm run test:work-queries
+npm run test:automation-state
+```
 
 ## 프로젝트 구조
 
-```
-notion-cron/
-├── app/api/
-│   ├── daily-snippet/route.ts    # 스니펫 생성 & 타임아웃 처리
-│   ├── discord-interact/route.ts # Discord 버튼/모달 처리
-│   └── weekly-report/route.ts   # 주간 미팅 리포트
-├── lib/
-│   ├── notion.ts    # Notion API 헬퍼
-│   ├── openai.ts    # GPT-4o 스니펫/리포트 생성
-│   ├── discord.ts   # Discord Bot API + 서명 검증
-│   └── gcs.ts       # GCS Pulse API (게시 + AI 채점)
-└── vercel.json      # Cron 스케줄 설정
+```text
+src/
+  server.ts                    # Express 엔트리포인트
+  scheduler.ts                 # 1분 tick 스케줄러
+  database.ts                  # SQLite 저장소
+  discord-handler.ts           # Discord interaction 처리
+  services/
+    daily-snippet-service.ts   # 데일리/주간 스니펫 생성
+    dispatch-service.ts        # pending/posted/skipped 상태 전이
+    weekly-report-service.ts   # Notion 주간 리포트
+lib/
+  notion.ts
+  openai.ts
+  discord.ts
+  gcs.ts
 ```

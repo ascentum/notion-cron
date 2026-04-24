@@ -8,6 +8,10 @@
  *   DISCORD_BOT_TOKEN, DISCORD_APP_ID
  */
 
+import { loadEnvironment } from "../src/load-env";
+
+loadEnvironment();
+
 const DISCORD_API = "https://discord.com/api/v10";
 const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN!;
 const APP_ID = process.env.DISCORD_APP_ID!;
