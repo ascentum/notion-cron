@@ -23,7 +23,7 @@ async function main() {
 
   assert.equal(process.env.FROM_ENV, "base");
   assert.equal(process.env.FROM_LOCAL, "local");
-  assert.equal(process.env.OVERRIDE_TEST, "base");
+  assert.equal(process.env.OVERRIDE_TEST, "local");
 
   process.chdir(originalCwd);
   process.env.FROM_ENV = originalFromEnv;

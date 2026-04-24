@@ -4,9 +4,9 @@ import dotenv from "dotenv";
 
 let loaded = false;
 
-function loadIfExists(filePath: string) {
+function loadIfExists(filePath: string, override = false) {
   if (!fs.existsSync(filePath)) return;
-  dotenv.config({ path: filePath, override: false });
+  dotenv.config({ path: filePath, override });
 }
 
 export function loadEnvironment() {
@@ -15,5 +15,5 @@ export function loadEnvironment() {
 
   const cwd = process.cwd();
   loadIfExists(path.join(cwd, ".env"));
-  loadIfExists(path.join(cwd, ".env.local"));
+  loadIfExists(path.join(cwd, ".env.local"), true);
 }
