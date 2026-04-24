@@ -4,3 +4,5 @@ node_modules/
 .claude/
 tsconfig.tsbuildinfo
 .vercel
+dist/
+data/
