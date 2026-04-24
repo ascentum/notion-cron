@@ -130,6 +130,8 @@ npm run test:load-env
 - Railway service name: `notion-cron`
 - GitHub repository: `ascentum/Ascentum-Notion-Cron`
 - Railway는 `main` 브랜치 기준 auto deploy로 동작한다.
+- Railway deploy/runtime 설정은 루트의 `railway.toml`로 함께 관리한다.
+- start command는 `node dist/src/server.js`로 직접 지정해, 롤링 배포 시 `npm run start`의 `SIGTERM` 오탐 알림을 줄인다.
 
 ## Discord Cutover 체크리스트
 

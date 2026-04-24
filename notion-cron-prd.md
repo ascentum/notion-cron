@@ -110,6 +110,9 @@
 - GitHub auto deploy branch: `main`
 - volume mount path: `/app/data`
 - sqlite path: `/app/data/automation.sqlite`
+- deploy/runtime config file: `railway.toml`
+- direct start command: `node dist/src/server.js`
+- healthcheck path: `/healthz`
 
 ### GitHub
 
@@ -132,6 +135,7 @@
 - 앱 런타임이 `node dist/src/server.js`로 기동되는 것 확인
 - `GET /healthz`가 `200 OK`로 응답하는 것 확인
 - scheduler enabled 상태 확인
+- 이전 배포가 교체될 때 `npm run start`가 `SIGTERM`을 에러처럼 남기던 패턴을 확인했고, 이를 줄이기 위해 `railway.toml`로 direct start command를 고정했다
 
 아직 남아 있는 수동 cutover 작업:
 
