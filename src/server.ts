@@ -7,6 +7,7 @@ import { startScheduler } from "./scheduler";
 import { sendDailySnippets } from "./services/daily-snippet-service";
 import { retryFailedDispatch, sweepDueDispatches } from "./services/dispatch-service";
 import { runWeeklyReport } from "./services/weekly-report-service";
+import { runWorkHoursReport } from "./services/work-hours-service";
 
 function requireInternalToken(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.header("authorization");
@@ -96,6 +97,18 @@ async function main() {
   app.post("/internal/reports/run-weekly", async (_req, res) => {
     try {
       const result = await runWeeklyReport(new Date());
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post("/internal/reports/run-work-hours", async (req, res) => {
+    try {
+      const result = await runWorkHoursReport(new Date(), {
+        dryRun: req.body?.dryRun === true,
+        targetWeekStart: req.body?.targetWeekStart,
+      });
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: String(error) });

@@ -54,4 +54,12 @@ export const config = {
     youngmin: required("GCS_API_TOKEN_YOUNGMIN"),
     seyeon: required("GCS_API_TOKEN_SEYEON"),
   },
+  // 구글 캘린더 기반 주간 업무 시간 리포트 (미설정이어도 다른 잡에는 영향 없음)
+  workHours: {
+    channelId: process.env.WORK_HOURS_CHANNEL_ID ?? "1483333112686579774",
+    calendarId: process.env.GOOGLE_CALENDAR_ID ?? "primary",
+    eventKeyword: process.env.WORK_HOURS_EVENT_KEYWORD ?? "영민 근무",
+    personName: process.env.WORK_HOURS_PERSON_NAME ?? "박영민",
+    historyLookbackDays: optionalInteger("WORK_HOURS_HISTORY_LOOKBACK_DAYS", 730),
+  },
 } as const;

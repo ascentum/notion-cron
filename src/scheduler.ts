@@ -9,9 +9,11 @@ import {
 import { sendDailySnippets } from "./services/daily-snippet-service";
 import { sweepDueDispatches } from "./services/dispatch-service";
 import { runWeeklyReport } from "./services/weekly-report-service";
+import { runWorkHoursReport } from "./services/work-hours-service";
 
 const DAILY_STATE_KEY = "last_daily_send_trigger_date";
 const WEEKLY_STATE_KEY = "last_weekly_report_trigger_date";
+const WORK_HOURS_STATE_KEY = "last_work_hours_report_trigger_date";
 
 function bootstrapSchedulerState(now: Date) {
   const { isoDate } = getKstDateInfo(now);
@@ -23,6 +25,10 @@ function bootstrapSchedulerState(now: Date) {
 
   if (!getSchedulerState(WEEKLY_STATE_KEY)) {
     setSchedulerState(WEEKLY_STATE_KEY, isoDate, timestamp);
+  }
+
+  if (!getSchedulerState(WORK_HOURS_STATE_KEY)) {
+    setSchedulerState(WORK_HOURS_STATE_KEY, isoDate, timestamp);
   }
 }
 
@@ -72,6 +78,19 @@ export function startScheduler() {
         await runTrackedJob("scheduled-weekly-report", isoDate, async () => {
           const result = await runWeeklyReport(now);
           setSchedulerState(WEEKLY_STATE_KEY, isoDate, new Date().toISOString());
+          return result;
+        });
+      }
+
+      // 월요일 00:00 KST — 지난주 업무 시간 리포트
+      if (weekday === 1 && getSchedulerState(WORK_HOURS_STATE_KEY) !== isoDate) {
+        await runTrackedJob("scheduled-work-hours-report", isoDate, async () => {
+          const result = await runWorkHoursReport(now);
+          setSchedulerState(
+            WORK_HOURS_STATE_KEY,
+            isoDate,
+            new Date().toISOString()
+          );
           return result;
         });
       }

@@ -96,3 +96,18 @@ export function verifyDiscordSignature(
     return false;
   }
 }
+
+// 일반 텍스트 메시지 전송 (embed 없이) → 메시지 ID 반환
+export async function sendDiscordText(
+  channelId: string,
+  content: string
+): Promise<string> {
+  const res = await fetch(`${DISCORD_API}/channels/${channelId}/messages`, {
+    method: "POST",
+    headers: botHeaders(),
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) throw new Error(`Discord send failed: ${await res.text()}`);
+  const data = await res.json();
+  return data.id as string;
+}

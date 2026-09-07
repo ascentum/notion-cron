@@ -11,13 +11,16 @@
     "start": "node dist/src/server.js",
     "register:commands": "tsx scripts/register-commands.ts",
     "notion:fix-work-calendar-views": "tsx scripts/fix-work-calendar-linked-view-filters.ts",
+    "work-hours:oauth-setup": "tsx scripts/google-oauth-setup.ts",
+    "work-hours:send": "tsx scripts/send-work-hours-report.ts",
     "test:task-hierarchy": "./node_modules/.bin/tsc --outDir /tmp/notion-cron-task-tests --module commonjs --moduleResolution node --target es2020 --lib es2020,dom --esModuleInterop true scripts/test-task-hierarchy.ts lib/notion.ts && NODE_PATH=./node_modules node /tmp/notion-cron-task-tests/scripts/test-task-hierarchy.js",
     "test:work-queries": "./node_modules/.bin/tsc --outDir /tmp/notion-cron-work-tests --module commonjs --moduleResolution node --target es2020 --lib es2020,dom --esModuleInterop true scripts/test-work-queries.ts lib/notion.ts lib/time.ts lib/openai.ts && NODE_PATH=./node_modules node /tmp/notion-cron-work-tests/scripts/test-work-queries.js",
     "test:weekly-report-formatting": "./node_modules/.bin/tsc --outDir /tmp/notion-cron-weekly-formatting-tests --module commonjs --moduleResolution node --target es2020 --lib es2020,dom --esModuleInterop true scripts/test-weekly-report-formatting.ts src/services/weekly-report-service.ts lib/notion.ts lib/openai.ts lib/time.ts src/config.ts src/load-env.ts && NODE_PATH=./node_modules node /tmp/notion-cron-weekly-formatting-tests/scripts/test-weekly-report-formatting.js",
     "test:weekly-report-auto-create-disabled": "./node_modules/.bin/tsc --outDir /tmp/notion-cron-weekly-autocreate-tests --module commonjs --moduleResolution node --target es2020 --lib es2020,dom --esModuleInterop true scripts/test-weekly-report-auto-create-disabled.ts src/services/weekly-report-service.ts lib/notion.ts lib/openai.ts lib/time.ts src/config.ts src/load-env.ts && NODE_PATH=./node_modules node /tmp/notion-cron-weekly-autocreate-tests/scripts/test-weekly-report-auto-create-disabled.js",
     "test:automation-state": "tsx scripts/test-automation-state.ts",
     "test:load-env": "tsx scripts/test-load-env.ts",
-    "test:work-calendar-view-filters": "tsx scripts/test-work-calendar-view-filters.ts"
+    "test:work-calendar-view-filters": "tsx scripts/test-work-calendar-view-filters.ts",
+    "test:work-hours": "tsx scripts/test-work-hours.ts"
   },
   "dependencies": {
     "@notionhq/client": "^2.3.0",

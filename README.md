@@ -53,6 +53,16 @@ Notion + Discord + GCS Pulse 자동화 서버. 현재 운영 기준은 `Oracle C
 - 기본 스캔 범위는 KST 오늘 기준 2일 전부터 오늘까지다.
 - 수동 실행은 GitHub Actions의 `Fix Notion linked view filters` workflow에서 `target_date`를 지정해 실행한다.
 
+### 5. 주간 업무 시간 리포트
+
+- KST 월요일 00:00에 스케줄러가 지난주(월~일) 구글 캘린더 일정을 집계한다.
+- 대상 캘린더는 `ym5373@gachon.ac.kr`이고, 제목에 `영민 근무`가 포함된 **시간 지정 일정**만 근무로 인정한다. (종일 일정은 시간 산정이 불가해 제외)
+- 누적 평균은 별도 저장 없이 매번 캘린더에서 과거 기록을 다시 조회해 계산한다. 캘린더가 항상 단일 진실 소스라 과거 일정을 수정해도 평균이 자동 교정된다.
+- 평균의 분모는 첫 근무 기록이 있는 주부터 지난주까지의 모든 주이며, 근무가 0시간인 주도 포함한다.
+- 주차 표기(`N월 N째주`)는 그 주의 목요일이 속한 달을 기준으로 한다.
+- 마지막 한 줄 멘트는 OpenAI가 매주 생성하고, 실패하면 성과 구간별 대체 멘트로 폴백한다.
+- 결과는 Discord mgmt 채널(`1483333112686579774`)에 일반 텍스트로 전송된다.
+
 ## 환경변수
 
 `.env.local` 또는 `ops/oracle/notion-cron.env`에 아래 값을 입력한다.
@@ -143,6 +153,31 @@ GitHub Actions repository variables는 선택값이다. 기본값과 다르게 �
 - `NOTION_LINKED_VIEW_DATE_PROPERTY_NAME`
 - `NOTION_WORK_CALENDAR_LOOKBACK_DAYS`
 
+## 구글 캘린더 연동 (최초 1회)
+
+1. GCP 프로젝트에서 **Google Calendar API**를 사용 설정한다. (프로젝트는 `ym5373@gachon.ac.kr` 계정 소유, OAuth 동의 화면 게시 상태는 `내부`)
+2. OAuth 클라이언트를 만들고 `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`을 `.env.local`에 넣는다.
+   현재 클라이언트는 **웹 애플리케이션** 유형이라 승인된 리디렉션 URI에 `http://localhost:5555/oauth2callback`가 등록되어 있어야 토큰 재발급이 된다. (데스크톱 앱 유형으로 만들면 루프백 URI가 자동 허용된다.)
+3. 리프레시 토큰을 발급받는다. 출력된 URL을 브라우저에서 열고 `ym5373@gachon.ac.kr`로 동의하면 `.env.local`에 자동 저장된다.
+
+```bash
+npm run work-hours:oauth-setup
+```
+
+4. 발송 없이 집계만 확인한다.
+
+```bash
+npm run work-hours:send -- --dry-run --env ops/oracle/notion-cron.env
+```
+
+5. 실제 발송 (특정 주를 지정하려면 `--week <해당 주 월요일>`).
+
+```bash
+npm run work-hours:send -- --env ops/oracle/notion-cron.env
+```
+
+`GOOGLE_CALENDAR_ID`는 기본값이 `primary`이며, `영민 근무` 일정이 보조 캘린더에 있다면 해당 캘린더 ID로 바꾼다.
+
 ## 내부 엔드포인트
 
 모든 `/internal/*` 엔드포인트는 `Authorization: Bearer $INTERNAL_ADMIN_TOKEN` 헤더가 필요하다.
@@ -150,6 +185,7 @@ GitHub Actions repository variables는 선택값이다. 기본값과 다르게 �
 - `POST /internal/snippets/send-daily`
 - `POST /internal/snippets/sweep-timeouts`
 - `POST /internal/reports/run-weekly`
+- `POST /internal/reports/run-work-hours` (`{"dryRun":true}`, `{"targetWeekStart":"2026-08-31"}` 옵션)
 - `POST /internal/snippets/retry/:id`
 - `GET /healthz`
 
@@ -172,6 +208,7 @@ npm run test:work-queries
 npm run test:automation-state
 npm run test:load-env
 npm run test:work-calendar-view-filters
+npm run test:work-hours
 ```
 
 ## 장애 대응
@@ -215,9 +252,12 @@ src/
     daily-snippet-service.ts   # 데일리/주간 스니펫 생성
     dispatch-service.ts        # pending/posted/skipped 상태 전이
     weekly-report-service.ts   # Notion 주간 리포트
+    work-hours-service.ts      # 구글 캘린더 주간 업무 시간 리포트
 lib/
   notion.ts
   openai.ts
   discord.ts
   gcs.ts
+  google-calendar.ts           # OAuth 토큰 갱신 + 캘린더 조회
+  work-hours.ts                # 근무 시간 집계/포맷 (순수 함수)
 ```

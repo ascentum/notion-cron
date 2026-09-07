@@ -277,3 +277,73 @@ ${rawData}`,
   });
   return res.choices[0].message.content ?? "";
 }
+
+// 주간 업무 시간 리포트 마지막 줄에 붙는 한 줄 멘트 (docs/copy-tone.md)
+const VOICE_GUIDES = {
+  "B-1": `톤 (거친 인터넷 로스팅):
+- 반말. 디시/인터넷 밈 어투를 자연스럽게 섞을 것 (~노, ~임, ~냐, 개-, ㅈㄴ, ㅅㅂ)
+- 문장 어딘가에 ㅋㅋ 를 최소 1회 넣을 것
+- 욕설은 ㅅㅂ, ㅈㄴ 같은 축약형 위주로 가볍게. 수위를 올리지 말 것
+- 놀리는 게 목적이다. 응원이나 조언으로 마무리하지 말 것
+
+이런 결로 써줘:
+- 이번 주 캘린더 ㅈㄴ 한산하던데 ㅋㅋ 뭐 하고 살았음?
+- 지난주보다 늘었다고 좋아하지 마라 ㅋㅋ 평균 밑인 건 그대로임
+- 이 정도면 근무가 아니라 휴가 아니냐 ㅋㅋ`,
+  "B-2": `톤 (정중한 풍자):
+- 존댓말 어미(~습니다, ~하시는 편이 좋겠습니다)를 쓰되 내용은 여전히 비꼬는 결일 것
+- 욕설, ㅋㅋ, 밈 어투, 반말 금지
+- 칭찬으로 곱게 마무리하지 말 것. 인정하되 "그래서 이게 유지가 되겠냐"는 뉘앙스로 한 번 꺾을 것
+- 컨설팅 보고서 + 풍자 칼럼 느낌
+
+이런 결로 써줘:
+- 평균은 넘기셨습니다. 축하까지는 아니고 확인 정도로 해두겠습니다.
+- 훌륭합니다. 이 기록이 일회성 이벤트가 아니길 바랄 뿐입니다.
+- 일은 잘하셨습니다. 잠은 언제 주무셨는지가 다음 안건입니다.`,
+} as const;
+
+export async function generateWorkHoursComment(input: {
+  name: string;
+  weekLabel: string;
+  totalHours: number;
+  previousHours: number;
+  averageHours: number;
+  verdict: string;
+  voice: "B-1" | "B-2";
+}): Promise<string> {
+  const openai = getClient();
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0.95,
+    messages: [
+      {
+        role: "user",
+        content: `${input.name}의 주간 업무 시간 리포트 마지막에 붙일 한 줄 멘트를 써줘.
+
+이번 주(${input.weekLabel}) 업무 시간: ${input.totalHours}시간
+지난주 업무 시간: ${input.previousHours}시간
+전체 기간 평균 주 업무 시간: ${input.averageHours}시간
+종합 판정: ${input.verdict}
+
+${VOICE_GUIDES[input.voice]}
+
+규칙:
+- 멘트의 방향은 반드시 '종합 판정'을 따를 것. 지난주보다 늘었더라도 판정이 아쉬우면 놀릴 것
+- 공격 대상은 근무 기록(근무 시간, 캘린더가 빈 정도, 밤샘, 지난주 대비 낙차)으로만 한정할 것
+- 외모, 건강, 가족, 연애사 등 사적 영역은 절대 건드리지 말 것
+- 정확히 한 문장, 50자 이내. 짧을수록 좋다
+- 억지로 늘리지 말 것. 어색하게 읽히는 문장은 버리고 짧게 다시 쓸 것
+- "화이팅", "개선의 여지" 같은 추상적인 표현으로 도망가지 말 것
+- 숫자를 그대로 나열하지 말 것
+- 이모지는 넣지 말 것 (앞에 자동으로 붙음)
+- 따옴표 없이 문장만 출력`,
+      },
+    ],
+  });
+
+  return (res.choices[0].message.content ?? "")
+    .trim()
+    .split("\n")[0]
+    .replace(/^["'\u201c\u2018]|["'\u201d\u2019]$/g, "")
+    .trim();
+}
