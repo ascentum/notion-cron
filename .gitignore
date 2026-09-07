@@ -11,3 +11,4 @@ dist/
 data/
 ops/oracle/notion-cron.env
 ops/oracle/backups/
+.DS_Store
