@@ -1,7 +1,8 @@
-import { shiftIsoDate, toKstIsoDate } from "./time";
+import { shiftIsoDate } from "./time";
 
 const MS_PER_HOUR = 60 * 60 * 1000;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
+const KST_OFFSET_MS = 9 * MS_PER_HOUR;
 
 export interface CalendarEventLike {
   summary?: string | null;
@@ -26,6 +27,19 @@ export interface ReportInput {
 function roundTo(value: number, digits: number): number {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
+}
+
+// KST 자정을 경계로 하는 날짜 인덱스 (자정을 넘는 일정을 쪼개는 기준)
+function toKstDayIndex(epochMs: number): number {
+  return Math.floor((epochMs + KST_OFFSET_MS) / MS_PER_DAY);
+}
+
+function kstDayStartMs(dayIndex: number): number {
+  return dayIndex * MS_PER_DAY - KST_OFFSET_MS;
+}
+
+function kstDayIndexToIso(dayIndex: number): string {
+  return new Date(dayIndex * MS_PER_DAY).toISOString().slice(0, 10);
 }
 
 function diffDays(fromIsoDate: string, toIsoDate: string): number {
@@ -79,10 +93,20 @@ export function toWorkSessions(
       continue;
     }
 
-    sessions.push({
-      dateIso: toKstIsoDate(startDateTime),
-      hours: roundTo((endMs - startMs) / MS_PER_HOUR, 2),
-    });
+    // 자정을 넘는 일정은 KST 자정에서 잘라 각 날짜에 나눠 담는다
+    const firstDay = toKstDayIndex(startMs);
+    const lastDay = toKstDayIndex(endMs - 1);
+
+    for (let day = firstDay; day <= lastDay; day += 1) {
+      const segmentStart = Math.max(startMs, kstDayStartMs(day));
+      const segmentEnd = Math.min(endMs, kstDayStartMs(day + 1));
+      if (segmentEnd <= segmentStart) continue;
+
+      sessions.push({
+        dateIso: kstDayIndexToIso(day),
+        hours: roundTo((segmentEnd - segmentStart) / MS_PER_HOUR, 2),
+      });
+    }
   }
 
   return sessions;

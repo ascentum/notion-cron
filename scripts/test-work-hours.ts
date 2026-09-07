@@ -72,6 +72,70 @@ function verifyWorkSessions() {
   assert.deepEqual(sessions[1], { dateIso: "2026-09-02", hours: 5 });
 }
 
+function verifyMidnightSplit() {
+  // 자정을 넘는 일정은 KST 자정 기준으로 쪼개서 각 날짜에 배분한다
+  const crossing = toWorkSessions(
+    [
+      {
+        summary: "영민 근무 (원격)",
+        start: { dateTime: "2026-08-16T20:00:00+09:00" },
+        end: { dateTime: "2026-08-17T01:45:00+09:00" },
+      },
+    ],
+    "영민 근무"
+  );
+  assert.deepEqual(crossing, [
+    { dateIso: "2026-08-16", hours: 4 },
+    { dateIso: "2026-08-17", hours: 1.75 },
+  ]);
+
+  // 자정 정각에 끝나면 다음 날에 0시간짜리가 생기지 않는다
+  const untilMidnight = toWorkSessions(
+    [
+      {
+        summary: "영민 근무",
+        start: { dateTime: "2026-09-01T22:00:00+09:00" },
+        end: { dateTime: "2026-09-02T00:00:00+09:00" },
+      },
+    ],
+    "영민 근무"
+  );
+  assert.deepEqual(untilMidnight, [{ dateIso: "2026-09-01", hours: 2 }]);
+
+  // 자정을 두 번 넘기면 가운데 날은 24시간
+  const twoNights = toWorkSessions(
+    [
+      {
+        summary: "영민 근무",
+        start: { dateTime: "2026-09-01T22:00:00+09:00" },
+        end: { dateTime: "2026-09-03T02:00:00+09:00" },
+      },
+    ],
+    "영민 근무"
+  );
+  assert.deepEqual(twoNights, [
+    { dateIso: "2026-09-01", hours: 2 },
+    { dateIso: "2026-09-02", hours: 24 },
+    { dateIso: "2026-09-03", hours: 2 },
+  ]);
+
+  // 주 경계를 넘으면 각각 다른 주로 집계된다 (일요일 밤샘 → 월요일)
+  const weekly = sumHoursByWeek(
+    toWorkSessions(
+      [
+        {
+          summary: "영민 근무",
+          start: { dateTime: "2026-09-06T23:00:00+09:00" },
+          end: { dateTime: "2026-09-07T03:00:00+09:00" },
+        },
+      ],
+      "영민 근무"
+    )
+  );
+  assert.equal(weekly.get("2026-08-31"), 1);
+  assert.equal(weekly.get("2026-09-07"), 3);
+}
+
 function verifySumHoursByWeek() {
   const weekly = sumHoursByWeek([
     { dateIso: "2026-09-01", hours: 4.5 },
@@ -212,6 +276,7 @@ verifyWeekStart();
 verifyWeekRange();
 verifyWeekLabel();
 verifyWorkSessions();
+verifyMidnightSplit();
 verifySumHoursByWeek();
 verifyFormatHours();
 verifyFormatDelta();
